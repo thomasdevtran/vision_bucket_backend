@@ -14,6 +14,7 @@ const listsRouter = require('./routes/lists');
 const newsRouter = require('./routes/news');
 const profileRouter = require('./routes/profile');
 const recommendationsRouter = require('./routes/recommendations');
+const reportsRouter = require('./routes/reports');
 const reviewsRouter = require('./routes/reviews');
 const openapi = require('./openapi');
 const { AppError, errorHandler, notFoundHandler } = require('./errors');
@@ -69,6 +70,7 @@ const createApp = ({ config, logger, readinessCheck }) => {
   app.use('/profile/diary', diaryRouter);
   app.use('/profile', profileRouter);
   app.use('/recommendations', recommendationsRouter);
+  app.use('/reports', reportsRouter);
   app.use('/reviews', reviewsRouter);
 
   app.use(notFoundHandler);

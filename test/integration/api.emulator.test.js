@@ -696,3 +696,187 @@ test('GET /recommendations ranks candidates from seeded watch history (provider 
   assert.equal(ids[0], 900, 'affinity-genre title ranks first');
   assert.ok(ids.includes(700));
 });
+
+// --- Moderation & reporting (Feature #9) -----------------------------------
+
+const { getAuth } = require('firebase-admin/auth');
+const { adminApp } = require('../../src/firebaseAdmin');
+
+const TEST_PASSWORD = 'test-password-123';
+
+// Sign up returning the email so we can re-authenticate after promoting a role.
+const signUp = async label => {
+  const email = `${label}-${Date.now()}-${Math.random()}@example.test`;
+  const response = await fetch(
+    `http://${authHost}/identitytoolkit.googleapis.com/v1/accounts:signUp?key=emulator-key`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, password: TEST_PASSWORD, returnSecureToken: true })
+    }
+  );
+  const body = await response.json();
+  assert.equal(response.ok, true, JSON.stringify(body));
+  return { uid: body.localId, token: body.idToken, email };
+};
+
+// Re-authenticate to mint a fresh ID token that carries any newly-set claims.
+const signIn = async email => {
+  const response = await fetch(
+    `http://${authHost}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=emulator-key`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, password: TEST_PASSWORD, returnSecureToken: true })
+    }
+  );
+  const body = await response.json();
+  assert.equal(response.ok, true, JSON.stringify(body));
+  return body.idToken;
+};
+
+// Create a user, set a role custom claim via the Admin SDK, then sign in again
+// so the returned token includes the claim (role: 'admin' | 'moderator').
+const createUserWithRole = async (label, role) => {
+  const user = await signUp(label);
+  await getAuth(adminApp).setCustomUserClaims(user.uid, { role });
+  const token = await signIn(user.email);
+  return { uid: user.uid, token };
+};
+
+const seedReview = async author => {
+  const ref = db.collection('Reviews').doc(`mod-review-${Date.now()}-${Math.random()}`);
+  await ref.set({ uid: author.uid, movieId: 7, Author: 'Author', content: 'reported content', rating: 3 });
+  return ref;
+};
+
+test('an authenticated user reports content and a duplicate open report is rejected with 409', async () => {
+  const reporter = await createUser('report-reporter');
+  const author = await createUser('report-author');
+  const reviewRef = await seedReview(author);
+
+  const created = await request(app)
+    .post('/reports')
+    .set(bearer(reporter.token))
+    .send({ targetType: 'review', targetId: reviewRef.id, reason: 'Spam' });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  assert.equal(created.body.reporterUid, reporter.uid);
+  assert.equal(created.body.targetType, 'review');
+  assert.equal(created.body.status, 'open');
+  assert.ok(created.body.id);
+
+  const duplicate = await request(app)
+    .post('/reports')
+    .set(bearer(reporter.token))
+    .send({ targetType: 'review', targetId: reviewRef.id, reason: 'Spam again' });
+  assert.equal(duplicate.status, 409);
+});
+
+test('reporting requires auth (401) and a missing target returns 404', async () => {
+  const unauth = await request(app)
+    .post('/reports')
+    .send({ targetType: 'review', targetId: 'whatever', reason: 'x' });
+  assert.equal(unauth.status, 401);
+
+  const reporter = await createUser('missing-target-reporter');
+  const missing = await request(app)
+    .post('/reports')
+    .set(bearer(reporter.token))
+    .send({ targetType: 'review', targetId: 'does-not-exist', reason: 'x' });
+  assert.equal(missing.status, 404);
+});
+
+test('a non-moderator cannot list or resolve reports (403)', async () => {
+  const user = await createUser('plain-user');
+
+  const list = await request(app).get('/reports').set(bearer(user.token));
+  assert.equal(list.status, 403);
+
+  const patch = await request(app)
+    .patch('/reports/whatever')
+    .set(bearer(user.token))
+    .send({ status: 'dismissed' });
+  assert.equal(patch.status, 403);
+
+  // Unauthenticated moderator endpoints are 401, not 403.
+  const anonList = await request(app).get('/reports');
+  assert.equal(anonList.status, 401);
+});
+
+test('a moderator lists open reports and dismisses one, writing an audit record', async () => {
+  const moderator = await createUserWithRole('moderator', 'moderator');
+  const reporter = await createUser('dismiss-reporter');
+  const author = await createUser('dismiss-author');
+  const reviewRef = await seedReview(author);
+
+  const created = await request(app)
+    .post('/reports')
+    .set(bearer(reporter.token))
+    .send({ targetType: 'review', targetId: reviewRef.id, reason: 'Not actually a problem' });
+  assert.equal(created.status, 201);
+  const reportId = created.body.id;
+
+  const list = await request(app).get('/reports?status=open').set(bearer(moderator.token));
+  assert.equal(list.status, 200);
+  assert.equal(list.body.status, 'open');
+  assert.ok(list.body.reports.some(report => report.id === reportId));
+
+  const dismissed = await request(app)
+    .patch(`/reports/${reportId}`)
+    .set(bearer(moderator.token))
+    .send({ status: 'dismissed' });
+  assert.equal(dismissed.status, 200);
+  assert.equal(dismissed.body.status, 'dismissed');
+  assert.equal(dismissed.body.resolvedBy, moderator.uid);
+  assert.ok(dismissed.body.resolvedAt);
+  assert.equal(dismissed.body.removedTarget, false);
+
+  // The reported content is untouched by a dismiss.
+  assert.equal((await reviewRef.get()).exists, true);
+
+  // An audit record was written for the action.
+  const audit = await db.collection('moderation_actions').where('reportId', '==', reportId).get();
+  assert.equal(audit.size, 1);
+  assert.equal(audit.docs[0].data().action, 'dismissed');
+  assert.equal(audit.docs[0].data().moderatorUid, moderator.uid);
+});
+
+test('an admin resolves a report with removeTarget and the reported content is deleted', async () => {
+  const admin = await createUserWithRole('admin', 'admin');
+  const reporter = await createUser('remove-reporter');
+  const author = await createUser('remove-author');
+  const reviewRef = await seedReview(author);
+
+  const created = await request(app)
+    .post('/reports')
+    .set(bearer(reporter.token))
+    .send({ targetType: 'review', targetId: reviewRef.id, reason: 'Abuse' });
+  assert.equal(created.status, 201);
+  const reportId = created.body.id;
+
+  const resolved = await request(app)
+    .patch(`/reports/${reportId}`)
+    .set(bearer(admin.token))
+    .send({ status: 'resolved', removeTarget: true });
+  assert.equal(resolved.status, 200);
+  assert.equal(resolved.body.status, 'resolved');
+  assert.equal(resolved.body.resolvedBy, admin.uid);
+  assert.equal(resolved.body.removedTarget, true);
+  assert.equal(resolved.body.resolution, 'removed');
+
+  // The offending content is gone.
+  assert.equal((await reviewRef.get()).exists, false);
+
+  const audit = await db.collection('moderation_actions').where('reportId', '==', reportId).get();
+  assert.equal(audit.size, 1);
+  assert.equal(audit.docs[0].data().action, 'remove_target');
+});
+
+test('resolving a missing report returns 404', async () => {
+  const moderator = await createUserWithRole('missing-report-mod', 'moderator');
+  const response = await request(app)
+    .patch('/reports/does-not-exist')
+    .set(bearer(moderator.token))
+    .send({ status: 'resolved' });
+  assert.equal(response.status, 404);
+});
