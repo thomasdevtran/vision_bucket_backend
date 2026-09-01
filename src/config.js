@@ -59,4 +59,18 @@ function loadConfig() {
   });
 }
 
-module.exports = { ConfigError, loadConfig };
+// Movie provider (TMDB) config. Kept separate from loadConfig so a missing
+// TMDB credential never blocks server boot — the movie routes surface a clear
+// AppError at request time instead (see src/movies/tmdbClient.js).
+function loadMovieConfig() {
+  return Object.freeze({
+    baseUrl: process.env.TMDB_BASE_URL || 'https://api.themoviedb.org/3',
+    accessToken: process.env.TMDB_ACCESS_TOKEN || null,
+    apiKey: process.env.TMDB_API_KEY || null,
+    timeoutMs: integer('TMDB_TIMEOUT_MS', 8000, { min: 1000, max: 60000 }),
+    maxRetries: integer('TMDB_MAX_RETRIES', 3, { min: 0, max: 10 }),
+    baseDelayMs: integer('TMDB_RETRY_BASE_MS', 200, { min: 0, max: 10000 }),
+  });
+}
+
+module.exports = { ConfigError, loadConfig, loadMovieConfig };
