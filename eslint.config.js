@@ -11,8 +11,11 @@ module.exports = [
       ecmaVersion: 'latest',
       sourceType: 'commonjs',
       globals: {
+        AbortController: 'readonly',
         Buffer: 'readonly',
+        URL: 'readonly',
         __dirname: 'readonly',
+        clearTimeout: 'readonly',
         console: 'readonly',
         fetch: 'readonly',
         module: 'readonly',

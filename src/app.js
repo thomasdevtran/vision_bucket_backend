@@ -6,6 +6,7 @@ const { rateLimit } = require('express-rate-limit');
 const pinoHttp = require('pino-http');
 const swaggerUi = require('swagger-ui-express');
 const discussionsRouter = require('./routes/discussions');
+const moviesRouter = require('./routes/movies');
 const newsRouter = require('./routes/news');
 const profileRouter = require('./routes/profile');
 const reviewsRouter = require('./routes/reviews');
@@ -54,6 +55,7 @@ const createApp = ({ config, logger, readinessCheck }) => {
   app.get('/openapi.json', (req, res) => res.json(openapi));
   app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapi, { customSiteTitle: 'Vision Bucket API' }));
 
+  app.use('/api/movies', moviesRouter);
   app.use('/discussions', discussionsRouter);
   app.use('/news', newsRouter);
   app.use('/profile', profileRouter);

@@ -61,11 +61,34 @@ const validateReviewUpdate = ({ content, rating } = {}) => {
   return { valid: errors.length === 0, errors, value };
 };
 
+// --- Movie provider query/param validation ------------------------------
+
+const validateSearchQuery = q => {
+  if (!isNonEmptyString(q)) return { valid: false, error: 'q is required' };
+  return { valid: true, value: q.trim() };
+};
+
+const parsePage = page => {
+  if (page === undefined || page === null || page === '') return { valid: true, value: 1 };
+  const parsed = toInteger(page);
+  if (parsed === null || parsed < 1) return { valid: false, error: 'page must be a positive integer' };
+  return { valid: true, value: parsed };
+};
+
+const parsePositiveId = (value, label = 'id') => {
+  const parsed = toInteger(value);
+  if (parsed === null || parsed < 1) return { valid: false, error: `${label} must be a positive integer` };
+  return { valid: true, value: parsed };
+};
+
 module.exports = {
   WATCH_STATUSES,
   isNonEmptyString,
   isValidWatchStatus,
   toInteger,
   validateReview,
-  validateReviewUpdate
+  validateReviewUpdate,
+  validateSearchQuery,
+  parsePage,
+  parsePositiveId
 };
