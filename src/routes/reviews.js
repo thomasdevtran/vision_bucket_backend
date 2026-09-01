@@ -25,7 +25,7 @@ router.post('/posting', authenticate, async (req, res) => {
         // Add the new review to the "Reviews" collection
         const docRef = await addDoc(collection(db, "Reviews"), newReview);
 
-        const { uid, ...review } = newReview;
+        const { uid: _uid, ...review } = newReview;
         res.status(201).json({ message: "Review added successfully", id: docRef.id, review });
 
     } catch (error) {

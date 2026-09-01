@@ -7,12 +7,12 @@ const { createComment, listCommentRecords, mergeWithLegacyComments } = require('
 const PARENT_TYPE = 'news_post';
 
 const serializePost = (id, data) => {
-  const { uid, Comments, ...post } = data;
+  const { uid: _uid, Comments, ...post } = data;
   return {
     id,
     ...post,
     Comments: Array.isArray(Comments)
-      ? Comments.map(({ uid, ...comment }) => comment)
+      ? Comments.map(({ uid: _uid, ...comment }) => comment)
       : []
   };
 };
@@ -120,7 +120,7 @@ router.post('/post/:docId/comment', authenticate, async (req, res) => {
       content,
       date
     });
-    const { uid, ...comment } = newComment;
+    const { uid: _uid, ...comment } = newComment;
     res.status(201).json({ 
       message: "Comment added successfully",
       comment

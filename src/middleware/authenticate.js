@@ -11,7 +11,7 @@ const createAuthenticate = (authClient = auth) => async (req, res, next) => {
   try {
     req.user = await authClient.verifyIdToken(match[1]);
     return next();
-  } catch (error) {
+  } catch {
     return res.status(401).json({ error: 'Invalid or expired Firebase ID token' });
   }
 };
