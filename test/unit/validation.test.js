@@ -20,8 +20,21 @@ test('review validation normalizes valid numeric fields', () => {
     movieId: 950387,
     Author: 'Ada',
     content: 'Worth watching',
-    rating: 5
+    rating: 5,
+    isSpoiler: false
   });
+});
+
+test('review validation defaults isSpoiler to false and accepts an explicit flag', () => {
+  assert.equal(validateReview({ movieId: 1, Author: 'Ada', content: 'ok', rating: 3 }).value.isSpoiler, false);
+
+  const flagged = validateReview({ movieId: 1, Author: 'Ada', content: 'twist', rating: 3, isSpoiler: true });
+  assert.equal(flagged.valid, true);
+  assert.equal(flagged.value.isSpoiler, true);
+
+  const bad = validateReview({ movieId: 1, Author: 'Ada', content: 'ok', rating: 3, isSpoiler: 'yes' });
+  assert.equal(bad.valid, false);
+  assert.ok(bad.errors.includes('isSpoiler must be a boolean'));
 });
 
 test('review validation rejects missing text and out-of-range ratings', () => {
@@ -44,6 +57,16 @@ test('review updates require at least one valid editable field', () => {
     content: 'updated',
     rating: 4
   });
+});
+
+test('review updates accept isSpoiler on its own and reject non-booleans', () => {
+  const spoilerOnly = validateReviewUpdate({ isSpoiler: true });
+  assert.equal(spoilerOnly.valid, true);
+  assert.deepEqual(spoilerOnly.value, { isSpoiler: true });
+
+  const bad = validateReviewUpdate({ isSpoiler: 'nope' });
+  assert.equal(bad.valid, false);
+  assert.ok(bad.errors.includes('isSpoiler must be a boolean'));
 });
 
 test('watch status validation accepts only persisted status fields', () => {

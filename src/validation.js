@@ -14,7 +14,7 @@ const toInteger = value => {
 };
 const isValidWatchStatus = status => WATCH_STATUSES.includes(status);
 
-const validateReview = ({ movieId, Author, content, rating } = {}) => {
+const validateReview = ({ movieId, Author, content, rating, isSpoiler } = {}) => {
   const parsedMovieId = toInteger(movieId);
   const parsedRating = toInteger(rating);
   const errors = [];
@@ -25,6 +25,9 @@ const validateReview = ({ movieId, Author, content, rating } = {}) => {
   if (parsedRating === null || parsedRating < 1 || parsedRating > 5) {
     errors.push('rating must be an integer from 1 to 5');
   }
+  if (isSpoiler !== undefined && typeof isSpoiler !== 'boolean') {
+    errors.push('isSpoiler must be a boolean');
+  }
 
   return {
     valid: errors.length === 0,
@@ -33,7 +36,8 @@ const validateReview = ({ movieId, Author, content, rating } = {}) => {
       movieId: parsedMovieId,
       Author: isNonEmptyString(Author) ? Author.trim() : Author,
       content: isNonEmptyString(content) ? content.trim() : content,
-      rating: parsedRating
+      rating: parsedRating,
+      isSpoiler: isSpoiler === true
     }
   };
 };
@@ -49,12 +53,12 @@ const validateFollow = ({ followeeId } = {}) => {
   };
 };
 
-const validateReviewUpdate = ({ content, rating } = {}) => {
+const validateReviewUpdate = ({ content, rating, isSpoiler } = {}) => {
   const errors = [];
   const value = {};
 
-  if (content === undefined && rating === undefined) {
-    errors.push('content or rating is required');
+  if (content === undefined && rating === undefined && isSpoiler === undefined) {
+    errors.push('content, rating, or isSpoiler is required');
   }
   if (content !== undefined) {
     if (!isNonEmptyString(content)) errors.push('content cannot be empty');
@@ -67,6 +71,10 @@ const validateReviewUpdate = ({ content, rating } = {}) => {
     } else {
       value.rating = parsedRating;
     }
+  }
+  if (isSpoiler !== undefined) {
+    if (typeof isSpoiler !== 'boolean') errors.push('isSpoiler must be a boolean');
+    else value.isSpoiler = isSpoiler;
   }
 
   return { valid: errors.length === 0, errors, value };
