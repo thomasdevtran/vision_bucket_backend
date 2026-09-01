@@ -438,3 +438,134 @@ test('GET /lists/user/:uid shows public lists to strangers and all lists to the 
   assert.ok(ownerTitles.includes('Public favourites'));
   assert.ok(ownerTitles.includes('Private stash'));
 });
+
+test('an unauthenticated diary POST is rejected with 401', async () => {
+  const response = await request(app)
+    .post('/profile/diary')
+    .send({ movieId: 1, watchedAt: '2026-01-01' });
+  assert.equal(response.status, 401);
+});
+
+test('a user logs a watch and it appears in their diary', async () => {
+  const user = await createUser('diary-owner');
+
+  const created = await request(app)
+    .post('/profile/diary')
+    .set(bearer(user.token))
+    .send({ movieId: 603, watchedAt: '2026-05-01', rating: 5, notes: 'Classic', rewatch: false });
+  assert.equal(created.status, 201);
+  assert.equal(created.body.userId, user.uid);
+  assert.equal(created.body.movieId, 603);
+  assert.equal(created.body.rating, 5);
+  assert.equal(created.body.notes, 'Classic');
+  assert.equal(created.body.rewatch, false);
+  assert.ok(created.body.id);
+
+  const diary = await request(app).get(`/profile/diary/${user.uid}`);
+  assert.equal(diary.status, 200);
+  assert.equal(diary.body.entries.length, 1);
+  assert.equal(diary.body.entries[0].id, created.body.id);
+});
+
+test('two watches of the same movie both persist as separate rewatch entries', async () => {
+  const user = await createUser('rewatcher');
+
+  const first = await request(app)
+    .post('/profile/diary')
+    .set(bearer(user.token))
+    .send({ movieId: 550, watchedAt: '2026-01-10', rating: 4 });
+  assert.equal(first.status, 201);
+
+  const second = await request(app)
+    .post('/profile/diary')
+    .set(bearer(user.token))
+    .send({ movieId: 550, watchedAt: '2026-06-20', rating: 5, rewatch: true });
+  assert.equal(second.status, 201);
+  assert.notEqual(first.body.id, second.body.id);
+
+  const diary = await request(app).get(`/profile/diary/${user.uid}`);
+  assert.equal(diary.status, 200);
+  const forMovie = diary.body.entries.filter(entry => entry.movieId === 550);
+  assert.equal(forMovie.length, 2);
+});
+
+test('the diary is newest-first and cursor-paginated', async () => {
+  const user = await createUser('diary-paginator');
+  const dates = ['2026-02-01', '2026-04-01', '2026-08-01'];
+  for (const watchedAt of dates) {
+    const created = await request(app)
+      .post('/profile/diary')
+      .set(bearer(user.token))
+      .send({ movieId: 100 + dates.indexOf(watchedAt), watchedAt });
+    assert.equal(created.status, 201);
+  }
+
+  const firstPage = await request(app).get(`/profile/diary/${user.uid}?limit=2`);
+  assert.equal(firstPage.status, 200);
+  assert.equal(firstPage.body.entries.length, 2);
+  assert.equal(firstPage.body.entries[0].watchedAt, '2026-08-01T00:00:00.000Z');
+  assert.equal(firstPage.body.entries[1].watchedAt, '2026-04-01T00:00:00.000Z');
+  assert.ok(firstPage.body.nextCursor, 'expected a nextCursor');
+
+  const secondPage = await request(app)
+    .get(`/profile/diary/${user.uid}?limit=2&cursor=${encodeURIComponent(firstPage.body.nextCursor)}`);
+  assert.equal(secondPage.status, 200);
+  assert.equal(secondPage.body.entries.length, 1);
+  assert.equal(secondPage.body.entries[0].watchedAt, '2026-02-01T00:00:00.000Z');
+  assert.equal(secondPage.body.nextCursor, null);
+});
+
+test('a diary owner can edit their entry but a non-owner cannot', async () => {
+  const owner = await createUser('diary-editor');
+  const attacker = await createUser('diary-attacker');
+
+  const created = await request(app)
+    .post('/profile/diary')
+    .set(bearer(owner.token))
+    .send({ movieId: 27205, watchedAt: '2026-03-03', rating: 3 });
+  assert.equal(created.status, 201);
+  const entryId = created.body.id;
+
+  const attackerEdit = await request(app)
+    .patch(`/profile/diary/${entryId}`)
+    .set(bearer(attacker.token))
+    .send({ rating: 1 });
+  assert.equal(attackerEdit.status, 404);
+
+  const attackerDelete = await request(app)
+    .delete(`/profile/diary/${entryId}`)
+    .set(bearer(attacker.token));
+  assert.equal(attackerDelete.status, 404);
+
+  const ownerEdit = await request(app)
+    .patch(`/profile/diary/${entryId}`)
+    .set(bearer(owner.token))
+    .send({ rating: 5, notes: 'Even better rewatched' });
+  assert.equal(ownerEdit.status, 200);
+  assert.equal(ownerEdit.body.rating, 5);
+  assert.equal(ownerEdit.body.notes, 'Even better rewatched');
+
+  const ownerDelete = await request(app)
+    .delete(`/profile/diary/${entryId}`)
+    .set(bearer(owner.token));
+  assert.equal(ownerDelete.status, 200);
+
+  const diary = await request(app).get(`/profile/diary/${owner.uid}`);
+  assert.equal(diary.body.entries.some(entry => entry.id === entryId), false);
+});
+
+test('diary POST rejects a future date and an out-of-range rating with 400', async () => {
+  const user = await createUser('diary-validator');
+
+  const future = await request(app)
+    .post('/profile/diary')
+    .set(bearer(user.token))
+    .send({ movieId: 1, watchedAt: '2999-01-01' });
+  assert.equal(future.status, 400);
+
+  const badRating = await request(app)
+    .post('/profile/diary')
+    .set(bearer(user.token))
+    .send({ movieId: 1, watchedAt: '2026-01-01', rating: 9 });
+  assert.equal(badRating.status, 400);
+});
