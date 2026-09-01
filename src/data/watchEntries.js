@@ -10,9 +10,10 @@ const {
   where
 } = require('../firebase');
 const { watchEntryDocumentId } = require('./recordIds');
+const { WATCH_STATUSES } = require('../validation');
 
 const WATCH_ENTRIES_COLLECTION = 'watch_entries';
-const VALID_STATUSES = ['Completed', 'Dropped', 'On_hold', 'Plan_to_watch', 'Rewatched'];
+const VALID_STATUSES = WATCH_STATUSES;
 
 const normalizeMovieId = movieId => String(movieId);
 

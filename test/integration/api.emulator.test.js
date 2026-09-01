@@ -2,11 +2,20 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const request = require('supertest');
 
+process.env.NODE_ENV = 'test';
+
 const { createApp } = require('../../src/app');
+const { loadConfig } = require('../../src/config');
 const { db } = require('../../src/firebase');
+const { createLogger } = require('../../src/logger');
 
 const authHost = process.env.FIREBASE_AUTH_EMULATOR_HOST;
-const app = createApp();
+const config = loadConfig();
+const app = createApp({
+  config,
+  logger: createLogger(config),
+  readinessCheck: async () => {}
+});
 
 const createUser = async label => {
   const response = await fetch(
