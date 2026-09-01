@@ -1,8 +1,46 @@
 const express = require('express');
 const router = express.Router();
-const { db, collection, getDoc, doc, addDoc, updateDoc, deleteDoc } = require('../firebase');
+const { db, collection, getDoc, getDocs, doc, query, where, addDoc, updateDoc, deleteDoc } = require('../firebase');
 const { authenticate } = require('../middleware/authenticate');
 const { validateReview, validateReviewUpdate } = require('../validation');
+
+const serializeReview = (id, data) => {
+    const { uid: _uid, ...review } = data;
+    return { id, ...review };
+};
+
+// GET /reviews/movie/:movieId - Public list of reviews for a movie
+router.get('/movie/:movieId', async (req, res) => {
+    const movieId = Number(req.params.movieId);
+    if (!Number.isInteger(movieId)) {
+        return res.status(400).json({ error: "Invalid movie id" });
+    }
+    try {
+        const snapshot = await getDocs(query(collection(db, "Reviews"), where("movieId", "==", movieId)));
+        const reviews = snapshot.docs
+            .map((reviewDoc) => serializeReview(reviewDoc.id, reviewDoc.data()))
+            .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+        res.status(200).json(reviews);
+    } catch (error) {
+        console.error("Error fetching reviews:", error);
+        res.status(500).json({ error: "Failed to fetch reviews" });
+    }
+});
+
+// GET /reviews/:docId - Public single review
+router.get('/:docId', async (req, res) => {
+    const { docId } = req.params;
+    try {
+        const reviewSnap = await getDoc(doc(db, "Reviews", docId));
+        if (!reviewSnap.exists()) {
+            return res.status(404).json({ error: "Review not found" });
+        }
+        res.status(200).json(serializeReview(reviewSnap.id, reviewSnap.data()));
+    } catch (error) {
+        console.error("Error fetching review:", error);
+        res.status(500).json({ error: "Failed to fetch review" });
+    }
+});
 
 // POST http://localhost:5000/reviews/posting
 router.post('/posting', authenticate, async (req, res) => {

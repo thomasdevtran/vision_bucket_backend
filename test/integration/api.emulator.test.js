@@ -89,6 +89,27 @@ test('a review owner can edit their own review with validated values', async () 
   assert.equal(persisted.rating, 4);
 });
 
+test('public review reads return reviews for a movie without leaking the owner uid', async () => {
+  const owner = await createUser('reader-owner');
+  const movieId = Math.floor(Math.random() * 1_000_000_000);
+  const reviewRef = db.collection('Reviews').doc(`review-${Date.now()}`);
+  await reviewRef.set({ uid: owner.uid, movieId, Author: 'Owner', content: 'great film', rating: 5 });
+
+  const listResponse = await request(app).get(`/reviews/movie/${movieId}`);
+  assert.equal(listResponse.status, 200);
+  assert.equal(listResponse.body.length, 1);
+  assert.equal(listResponse.body[0].content, 'great film');
+  assert.equal(listResponse.body[0].uid, undefined);
+
+  const oneResponse = await request(app).get(`/reviews/${reviewRef.id}`);
+  assert.equal(oneResponse.status, 200);
+  assert.equal(oneResponse.body.id, reviewRef.id);
+  assert.equal(oneResponse.body.uid, undefined);
+
+  const missingResponse = await request(app).get('/reviews/does-not-exist');
+  assert.equal(missingResponse.status, 404);
+});
+
 test('a supplied UID cannot redirect a profile write to another user', async () => {
   const victim = await createUser('victim');
   const attacker = await createUser('profile-attacker');
