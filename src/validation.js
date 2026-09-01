@@ -92,8 +92,112 @@ const parsePositiveId = (value, label = 'id') => {
   return { valid: true, value: parsed };
 };
 
+const LIST_TITLE_MAX = 100;
+const LIST_DESCRIPTION_MAX = 500;
+const LIST_NOTE_MAX = 300;
+
+const validateDescription = (description, errors, value) => {
+  if (description === undefined || description === null || description === '') {
+    value.description = '';
+    return;
+  }
+  if (typeof description !== 'string') {
+    errors.push('description must be a string');
+  } else if (description.trim().length > LIST_DESCRIPTION_MAX) {
+    errors.push(`description must be at most ${LIST_DESCRIPTION_MAX} characters`);
+  } else {
+    value.description = description.trim();
+  }
+};
+
+const validateListCreate = ({ title, description, isPublic } = {}) => {
+  const errors = [];
+  const value = {};
+
+  if (!isNonEmptyString(title)) {
+    errors.push('title is required');
+  } else if (title.trim().length > LIST_TITLE_MAX) {
+    errors.push(`title must be at most ${LIST_TITLE_MAX} characters`);
+  } else {
+    value.title = title.trim();
+  }
+
+  validateDescription(description, errors, value);
+
+  if (isPublic === undefined) {
+    value.isPublic = false;
+  } else if (typeof isPublic !== 'boolean') {
+    errors.push('isPublic must be a boolean');
+  } else {
+    value.isPublic = isPublic;
+  }
+
+  return { valid: errors.length === 0, errors, value };
+};
+
+const validateListUpdate = ({ title, description, isPublic } = {}) => {
+  const errors = [];
+  const value = {};
+
+  if (title === undefined && description === undefined && isPublic === undefined) {
+    errors.push('title, description, or isPublic is required');
+  }
+  if (title !== undefined) {
+    if (!isNonEmptyString(title)) errors.push('title cannot be empty');
+    else if (title.trim().length > LIST_TITLE_MAX) errors.push(`title must be at most ${LIST_TITLE_MAX} characters`);
+    else value.title = title.trim();
+  }
+  if (description !== undefined) {
+    if (typeof description !== 'string') errors.push('description must be a string');
+    else if (description.trim().length > LIST_DESCRIPTION_MAX) {
+      errors.push(`description must be at most ${LIST_DESCRIPTION_MAX} characters`);
+    } else value.description = description.trim();
+  }
+  if (isPublic !== undefined) {
+    if (typeof isPublic !== 'boolean') errors.push('isPublic must be a boolean');
+    else value.isPublic = isPublic;
+  }
+
+  return { valid: errors.length === 0, errors, value };
+};
+
+const validateListItem = ({ movieId, note } = {}) => {
+  const errors = [];
+  const value = {};
+  const parsedMovieId = toInteger(movieId);
+
+  if (parsedMovieId === null || parsedMovieId < 1) errors.push('movieId must be a positive integer');
+  else value.movieId = parsedMovieId;
+
+  if (note !== undefined && note !== null && note !== '') {
+    if (typeof note !== 'string') errors.push('note must be a string');
+    else if (note.trim().length > LIST_NOTE_MAX) errors.push(`note must be at most ${LIST_NOTE_MAX} characters`);
+    else value.note = note.trim();
+  }
+
+  return { valid: errors.length === 0, errors, value };
+};
+
+const validateReorder = ({ order } = {}) => {
+  const errors = [];
+  if (!Array.isArray(order) || order.length === 0) {
+    return { valid: false, errors: ['order must be a non-empty array of movieIds'], value: { order: [] } };
+  }
+  const parsed = order.map(toInteger);
+  if (parsed.some(id => id === null || id < 1)) {
+    errors.push('order must contain only positive integer movieIds');
+  }
+  if (new Set(parsed.map(String)).size !== parsed.length) {
+    errors.push('order must not contain duplicate movieIds');
+  }
+  return { valid: errors.length === 0, errors, value: { order: parsed } };
+};
+
 module.exports = {
   WATCH_STATUSES,
+  LIST_TITLE_MAX,
+  LIST_DESCRIPTION_MAX,
+  LIST_NOTE_MAX,
   isNonEmptyString,
   isValidWatchStatus,
   toInteger,
@@ -102,5 +206,9 @@ module.exports = {
   validateReviewUpdate,
   validateSearchQuery,
   parsePage,
-  parsePositiveId
+  parsePositiveId,
+  validateListCreate,
+  validateListUpdate,
+  validateListItem,
+  validateReorder
 };

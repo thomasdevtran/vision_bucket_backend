@@ -9,6 +9,7 @@ const discussionsRouter = require('./routes/discussions');
 const moviesRouter = require('./routes/movies');
 const feedRouter = require('./routes/feed');
 const followsRouter = require('./routes/follows');
+const listsRouter = require('./routes/lists');
 const newsRouter = require('./routes/news');
 const profileRouter = require('./routes/profile');
 const reviewsRouter = require('./routes/reviews');
@@ -61,6 +62,7 @@ const createApp = ({ config, logger, readinessCheck }) => {
   app.use('/discussions', discussionsRouter);
   app.use('/feed', feedRouter);
   app.use('/follows', followsRouter);
+  app.use('/lists', listsRouter);
   app.use('/news', newsRouter);
   app.use('/profile', profileRouter);
   app.use('/reviews', reviewsRouter);
