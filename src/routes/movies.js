@@ -72,3 +72,7 @@ const router = createMoviesRouter(providerProxy);
 
 module.exports = router;
 module.exports.createMoviesRouter = createMoviesRouter;
+// Exposed so sibling routes (e.g. recommendations) reuse the same lazily-built
+// provider instance — and therefore its upstream TTL cache — rather than
+// standing up a second one.
+module.exports.getDefaultProvider = getDefaultProvider;

@@ -84,6 +84,23 @@ const createMovieProvider = ({ client, cache, ttl = TTL } = {}) => {
       return normalizeGenreList(raw);
     });
 
+  // Genre *names* for a single movie. The normalized Movie shape omits genres,
+  // but recommendations need them to compute a user's genre affinity, so this
+  // reads the detail payload's `genres: [{ id, name }]` and returns the names.
+  // Cached under its own key with the long details TTL.
+  const getMovieGenres = async id => {
+    const parsed = parsePositiveId(id, 'movie id');
+    if (!parsed.valid) throw badRequest(parsed.error);
+
+    const key = `movieGenres:${parsed.value}`;
+    return cached(key, ttl.details, async () => {
+      const raw = await client.get(`/movie/${parsed.value}`);
+      return Array.isArray(raw && raw.genres)
+        ? raw.genres.map(genre => (genre && typeof genre.name === 'string' ? genre.name : null)).filter(Boolean)
+        : [];
+    });
+  };
+
   const getMoviesByGenre = async (genreId, page) => {
     const parsed = parsePositiveId(genreId, 'genre id');
     if (!parsed.valid) throw badRequest(parsed.error);
@@ -106,6 +123,7 @@ const createMovieProvider = ({ client, cache, ttl = TTL } = {}) => {
     getMovieDetails,
     getPopularMovies,
     getGenres,
+    getMovieGenres,
     getMoviesByGenre
   };
 };

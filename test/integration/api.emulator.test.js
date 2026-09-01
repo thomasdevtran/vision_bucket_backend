@@ -569,3 +569,49 @@ test('diary POST rejects a future date and an out-of-range rating with 400', asy
     .send({ movieId: 1, watchedAt: '2026-01-01', rating: 9 });
   assert.equal(badRating.status, 400);
 });
+
+test('GET /recommendations ranks candidates from seeded watch history (provider mocked)', async () => {
+  const express = require('express');
+  const { createRecommendationsRouter } = require('../../src/routes/recommendations');
+  const { errorHandler, notFoundHandler } = require('../../src/errors');
+
+  const user = await createUser('rec-user');
+  await createProfile(user, 'RecUser');
+
+  // Seed real watch_entries through the live profile endpoint.
+  const seeded = await request(app)
+    .put('/profile/update/Completed/add_movie')
+    .set(bearer(user.token))
+    .send({ movieId: 500 });
+  assert.equal(seeded.status, 200);
+
+  // Mock only the TMDB-backed provider layer; auth + firestore reads are real.
+  const mockProvider = {
+    getPopularMovies: async () => ({ page: 1, results: [
+      { id: 500, title: 'Watched', vote_average: 9 },
+      { id: 700, title: 'Popular Only', vote_average: 8 }
+    ] }),
+    getGenres: async () => ({ genres: [{ id: 878, name: 'Sci-Fi' }] }),
+    getMovieGenres: async () => ['Sci-Fi'],
+    getMoviesByGenre: async () => ({ page: 1, results: [
+      { id: 900, title: 'SciFi Pick', vote_average: 6 }
+    ] })
+  };
+
+  const recApp = express();
+  recApp.use((req, res, next) => { req.id = 'rec-test'; req.log = { error() {}, warn() {} }; next(); });
+  recApp.use('/recommendations', createRecommendationsRouter({ provider: () => mockProvider }));
+  recApp.use(notFoundHandler);
+  recApp.use(errorHandler);
+
+  const response = await request(recApp)
+    .get('/recommendations?limit=5')
+    .set(bearer(user.token));
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.fallback, false);
+  const ids = response.body.results.map(movie => movie.id);
+  assert.ok(!ids.includes(500), 'watched movie must be excluded');
+  assert.equal(ids[0], 900, 'affinity-genre title ranks first');
+  assert.ok(ids.includes(700));
+});
