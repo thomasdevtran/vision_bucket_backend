@@ -10,6 +10,7 @@ const {
     listFollowerIds,
     isFollowing
 } = require('../data/follows');
+const { createNotification } = require('../data/notifications');
 
 // POST /follows - authenticated user follows another user. Idempotent.
 router.post('/', authenticate, async (req, res) => {
@@ -33,6 +34,14 @@ router.post('/', authenticate, async (req, res) => {
         }
 
         const follow = await createFollow(followerId, followeeId);
+
+        // Notify the followee. Guarded so a notification failure never fails the follow.
+        try {
+            await createNotification({ userId: followeeId, type: 'follow', actorUid: followerId });
+        } catch (notifyError) {
+            console.error("Failed to create follow notification:", notifyError);
+        }
+
         res.status(201).json({ message: "Followed successfully", follow });
     } catch (error) {
         console.error("Error creating follow:", error);
