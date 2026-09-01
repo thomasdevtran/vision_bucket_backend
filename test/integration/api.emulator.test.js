@@ -3,6 +3,10 @@ const assert = require('node:assert/strict');
 const request = require('supertest');
 
 process.env.NODE_ENV = 'test';
+// The whole suite shares one app instance and one rate-limit bucket (all requests
+// come from 127.0.0.1). Raise the limit for tests so the growing suite never trips
+// the default cap; a deliberate override is still honored.
+process.env.RATE_LIMIT_MAX = process.env.RATE_LIMIT_MAX || '100000';
 
 const { createApp } = require('../../src/app');
 const { loadConfig } = require('../../src/config');
@@ -695,4 +699,105 @@ test('GET /recommendations ranks candidates from seeded watch history (provider 
   assert.ok(!ids.includes(500), 'watched movie must be excluded');
   assert.equal(ids[0], 900, 'affinity-genre title ranks first');
   assert.ok(ids.includes(700));
+});
+
+// --- Import / export (Feature #10) -----------------------------------------
+
+const seedExportFixtures = async user => {
+  const movieId = Math.floor(Math.random() * 1_000_000_000);
+  await request(app)
+    .put('/profile/update/Completed/add_movie')
+    .set(bearer(user.token))
+    .send({ movieId, rating: 4 });
+  await request(app)
+    .post('/profile/diary')
+    .set(bearer(user.token))
+    .send({ movieId, watchedAt: '2024-02-01', rating: 5, notes: 'great rewatch' });
+  const reviewRes = await request(app)
+    .post('/reviews/posting')
+    .set(bearer(user.token))
+    .send({ movieId, Author: 'Me', content: 'a solid film', rating: 4 });
+  assert.equal(reviewRes.status, 201, JSON.stringify(reviewRes.body));
+  const listRes = await request(app)
+    .post('/lists')
+    .set(bearer(user.token))
+    .send({ title: `My List ${movieId}`, description: 'stuff' });
+  assert.equal(listRes.status, 201, JSON.stringify(listRes.body));
+  return { movieId };
+};
+
+test('export returns the caller\'s own data and does not leak another user', async () => {
+  const owner = await createUser('export-owner');
+  const other = await createUser('export-other');
+  await request(app).post('/profile/create').set(bearer(owner.token)).send({ Username: 'Owner' });
+  const { movieId } = await seedExportFixtures(owner);
+  // Another user's review for the same movie must not appear in owner's export.
+  await request(app)
+    .post('/reviews/posting')
+    .set(bearer(other.token))
+    .send({ movieId, Author: 'Other', content: 'not yours', rating: 2 });
+
+  const response = await request(app).get('/profile/export').set(bearer(owner.token));
+  assert.equal(response.status, 200);
+  assert.match(response.headers['content-disposition'], /vision-bucket-export\.json/);
+  const body = response.body;
+  assert.equal(body.version, 1);
+  assert.ok(body.watchEntries.some(entry => String(entry.movieId) === String(movieId)));
+  assert.ok(body.diary.some(entry => String(entry.movieId) === String(movieId)));
+  assert.equal(body.reviews.length, 1);
+  assert.equal(body.reviews[0].content, 'a solid film');
+  assert.ok(body.lists.some(list => list.title === `My List ${movieId}`));
+});
+
+test('unauthenticated export and import are rejected with 401', async () => {
+  assert.equal((await request(app).get('/profile/export')).status, 401);
+  assert.equal((await request(app).post('/profile/import').send({ version: 1 })).status, 401);
+});
+
+test('import recreates entries and is idempotent on re-import', async () => {
+  const source = await createUser('import-source');
+  await request(app).post('/profile/create').set(bearer(source.token)).send({ Username: 'Source' });
+  await seedExportFixtures(source);
+  const exportRes = await request(app).get('/profile/export').set(bearer(source.token));
+  assert.equal(exportRes.status, 200);
+  const exportDoc = exportRes.body;
+
+  const target = await createUser('import-target');
+  await request(app).post('/profile/create').set(bearer(target.token)).send({ Username: 'Target' });
+
+  const first = await request(app).post('/profile/import').set(bearer(target.token)).send(exportDoc);
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  assert.equal(first.body.imported.watchEntries, 1);
+  assert.equal(first.body.imported.diary, 1);
+  assert.equal(first.body.imported.reviews, 1);
+  assert.equal(first.body.imported.lists, 1);
+
+  // The target now owns the imported data under its own uid (ownership rewritten).
+  const targetExport = await request(app).get('/profile/export').set(bearer(target.token));
+  assert.equal(targetExport.body.reviews.length, 1);
+  assert.equal(targetExport.body.reviews[0].uid, target.uid);
+  assert.equal(targetExport.body.lists[0].ownerId, target.uid);
+
+  const second = await request(app).post('/profile/import').set(bearer(target.token)).send(exportDoc);
+  assert.equal(second.status, 200);
+  assert.equal(second.body.imported.watchEntries, 0);
+  assert.equal(second.body.imported.diary, 0);
+  assert.equal(second.body.imported.reviews, 0);
+  assert.equal(second.body.imported.lists, 0);
+  assert.equal(second.body.skipped.diary, 1);
+  assert.equal(second.body.skipped.reviews, 1);
+  assert.equal(second.body.skipped.lists, 1);
+
+  // No duplicates were created by the second import.
+  const finalExport = await request(app).get('/profile/export').set(bearer(target.token));
+  assert.equal(finalExport.body.reviews.length, 1);
+  assert.equal(finalExport.body.diary.length, 1);
+  assert.equal(finalExport.body.lists.length, 1);
+});
+
+test('import rejects malformed documents with 400', async () => {
+  const user = await createUser('import-malformed');
+  assert.equal((await request(app).post('/profile/import').set(bearer(user.token)).send({ version: 999 })).status, 400);
+  assert.equal((await request(app).post('/profile/import').set(bearer(user.token)).send({ version: 1, diary: 'nope' })).status, 400);
+  assert.equal((await request(app).post('/profile/import').set(bearer(user.token)).send([1, 2, 3])).status, 400);
 });
