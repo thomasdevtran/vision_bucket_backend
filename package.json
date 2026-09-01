@@ -10,9 +10,14 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "devstart": "nodemon src/server.js",
-    "test": "node --test",
+    "lint": "eslint .",
+    "test": "npm run test:unit && npm run test:emulator",
+    "test:unit": "node --test test/authenticate.test.js test/routes-auth.test.js test/unit/validation.test.js test/unit/recommendations.test.js",
+    "test:emulator": "firebase emulators:exec --project demo-vision-bucket --only auth,firestore \"node --test test/integration/api.emulator.test.js\"",
+    "build": "node scripts/check-build.js",
     "migrate:normalized": "node scripts/migrate-normalized-records.js",
-    "audit:prod": "npm audit --omit=dev --audit-level=high"
+    "audit": "npm audit --omit=dev --audit-level=high",
+    "audit:prod": "npm run audit"
   },
   "dependencies": {
     "cors": "^2.8.5",

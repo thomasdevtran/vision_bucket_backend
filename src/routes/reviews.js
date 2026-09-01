@@ -2,24 +2,23 @@ const express = require('express');
 const router = express.Router();
 const { db, collection, getDoc, doc, addDoc, updateDoc, deleteDoc } = require('../firebase');
 const { authenticate } = require('../middleware/authenticate');
+const { validateReview, validateReviewUpdate } = require('../validation');
 
 // POST http://localhost:5000/reviews/posting
 router.post('/posting', authenticate, async (req, res) => {
     try {
-        const { movieId, Author, content, rating } = req.body;
-
-        // Validate input
-        if (!movieId || !Author || !content || !rating) {
-            return res.status(400).json({ error: "Missing required fields" });
+        const validation = validateReview(req.body);
+        if (!validation.valid) {
+            return res.status(400).json({ error: "Invalid review", details: validation.errors });
         }
 
         // Create new review object
         const newReview = {
-            movieId: parseInt(movieId), // Ensure movieId is an integer
+            movieId: validation.value.movieId,
             date: new Date().toISOString(), // Store the current date
-            Author,
-            content,
-            rating: parseInt(rating), // Ensure rating is an integer
+            Author: validation.value.Author,
+            content: validation.value.content,
+            rating: validation.value.rating,
             uid: req.user.uid
         };
 
@@ -62,7 +61,6 @@ router.delete('/:docId', authenticate, async (req, res) => {
 // PATCH /reviews/:docId - Update a review owned by the authenticated user
 router.patch('/:docId', authenticate, async (req, res) => {
     const { docId } = req.params;
-    const { content, rating } = req.body;
     try {
         const reviewRef = doc(db, "Reviews", docId);
         const reviewSnap = await getDoc(reviewRef);
@@ -76,11 +74,12 @@ router.patch('/:docId', authenticate, async (req, res) => {
             return res.status(403).json({ error: "Unauthorized: You are not allowed to update this review" });
         }
 
-        const updateData = {};
-        if (content !== undefined) updateData.content = content;
-        if (rating !== undefined) updateData.rating = parseInt(rating);
+        const validation = validateReviewUpdate(req.body);
+        if (!validation.valid) {
+            return res.status(400).json({ error: "Invalid review update", details: validation.errors });
+        }
 
-        await updateDoc(reviewRef, updateData);
+        await updateDoc(reviewRef, validation.value);
         res.status(200).json({ message: "Review updated successfully" });
     } catch (error) {
         console.error("Error updating review:", error);

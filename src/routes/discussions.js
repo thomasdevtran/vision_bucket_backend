@@ -78,12 +78,7 @@ router.get('/post/:docId', async (req, res) => {
 
 // {
 //   "Author": "John Doe",
-//   "uid": "KuEuWrfkqHDDMpDY1KqH", // optional, can be added for user tracking
 //   "Date": "20250603",
-//   "Comments": [
-//     {
-//     }
-//   ],
 //   "Title": "New Discussion Topic",
 //   "Description": "This is a description of the new discussion topic."
 // }

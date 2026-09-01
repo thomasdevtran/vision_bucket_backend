@@ -3,7 +3,7 @@ require('dotenv').config();
 const { cert, getApps, initializeApp } = require('firebase-admin/app');
 const { getAuth } = require('firebase-admin/auth');
 
-const projectId = process.env.FIREBASE_PROJECT_ID || 'inf-124-10961';
+const projectId = process.env.FIREBASE_PROJECT_ID || process.env.GCLOUD_PROJECT || 'inf-124-10961';
 const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
 const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
 const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');

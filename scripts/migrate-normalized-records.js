@@ -17,7 +17,7 @@ const writeIfMissing = async (collectionName, id, data, category) => {
   try {
     const target = doc(db, collectionName, id);
     const snapshot = await getDoc(target);
-    if (snapshot.exists) {
+    if (snapshot.exists()) {
       summary[category].existing += 1;
       return;
     }
@@ -36,7 +36,7 @@ const migrateComments = async (sourceCollection, parentType) => {
     if (!Array.isArray(comments)) continue;
 
     for (const [index, comment] of comments.entries()) {
-      if (!comment || !comment.author || !comment.content || !comment.date) {
+      if (!comment || !comment.commentId || !comment.author || !comment.content || !comment.date) {
         summary.comments.invalid += 1;
         continue;
       }

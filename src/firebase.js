@@ -16,13 +16,23 @@ const query = (reference, ...constraints) => constraints.reduce(
   reference
 );
 const getDocs = reference => reference.get();
-const getDoc = reference => reference.get();
+const getDoc = async reference => {
+  const snapshot = await reference.get();
+  return {
+    id: snapshot.id,
+    exists: () => snapshot.exists,
+    data: () => snapshot.data()
+  };
+};
 const addDoc = (reference, data) => reference.add(data);
 const updateDoc = (reference, data) => reference.update(data);
-const setDoc = (reference, data, options) => reference.set(data, options);
+const setDoc = (reference, data, options) => options
+  ? reference.set(data, options)
+  : reference.set(data);
 const deleteDoc = reference => reference.delete();
 const arrayUnion = (...values) => FieldValue.arrayUnion(...values);
 const arrayRemove = (...values) => FieldValue.arrayRemove(...values);
+const checkFirestoreReady = () => db.listCollections();
 
 module.exports = {
   db,
@@ -37,5 +47,6 @@ module.exports = {
   arrayUnion,
   arrayRemove,
   query,
-  where
+  where,
+  checkFirestoreReady
 };

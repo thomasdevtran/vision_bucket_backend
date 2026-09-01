@@ -69,7 +69,13 @@ const deleteComment = comment => deleteDoc(doc(db, COMMENTS_COLLECTION, comment.
 
 const deleteCommentsForParent = async (parentType, parentId) => {
   const comments = await listCommentRecords(parentType, parentId);
-  await Promise.all(comments.map(deleteComment));
+  for (let offset = 0; offset < comments.length; offset += 500) {
+    const batch = db.batch();
+    for (const comment of comments.slice(offset, offset + 500)) {
+      batch.delete(doc(db, COMMENTS_COLLECTION, comment.id));
+    }
+    await batch.commit();
+  }
   return comments.length;
 };
 

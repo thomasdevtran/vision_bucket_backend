@@ -120,8 +120,21 @@ router.post('/create', authenticate, asyncHandler(async (req, res) => {
     const userData = { ...req.body };
     delete userData.uid;
 
+    const initialWatchEntries = [];
+    for (const status of VALID_STATUSES) {
+        const movieIds = Array.isArray(userData[status]) ? userData[status] : [];
+        initialWatchEntries.push(...movieIds.map(movieId => ({ userId: uid, movieId, status })));
+        delete userData[status];
+    }
+
+    const uniqueMovieIds = new Set(initialWatchEntries.map(entry => String(entry.movieId)));
+    if (uniqueMovieIds.size !== initialWatchEntries.length) {
+        return res.status(400).json({ error: "A movie can only have one watch status" });
+    }
+
     try {
         await setDoc(doc(db, "Users", uid), userData);
+        await Promise.all(initialWatchEntries.map(upsertWatchEntry));
         console.log("Document written with ID: ", uid);
         res.status(201).json({ message: "User created successfully", uid: uid });
     } catch (e) {
