@@ -1148,3 +1148,51 @@ test('import rejects malformed documents with 400', async () => {
   assert.equal((await request(app).post('/profile/import').set(bearer(user.token)).send({ version: 1, diary: 'nope' })).status, 400);
   assert.equal((await request(app).post('/profile/import').set(bearer(user.token)).send([1, 2, 3])).status, 400);
 });
+
+// --- User statistics dashboard (Feature #7) --------------------------------
+
+test('GET /profile/stats/:uid aggregates a user\'s watch history, diary, and reviews', async () => {
+  const user = await createUser('stats-user');
+  await createProfile(user, 'StatsUser');
+
+  await request(app).put('/profile/update/Completed/add_movie').set(bearer(user.token)).send({ movieId: 500 });
+  await request(app).put('/profile/update/Completed/add_movie').set(bearer(user.token)).send({ movieId: 700 });
+  await request(app).post('/profile/diary').set(bearer(user.token)).send({ movieId: 500, watchedAt: '2026-01-01', rating: 5 });
+  await request(app).post('/profile/diary').set(bearer(user.token)).send({ movieId: 700, watchedAt: '2025-06-01', rating: 3 });
+  await postReview(user, 500, { rating: 4 });
+
+  const res = await request(app).get(`/profile/stats/${user.uid}`);
+  assert.equal(res.status, 200);
+  assert.equal(res.body.totals.moviesWatched, 2);
+  assert.equal(res.body.totals.diaryEntries, 2);
+  assert.equal(res.body.totals.reviews, 1);
+  // ratings given: review 4 + diary 5 + diary 3 => average 4
+  assert.equal(res.body.totals.averageRating, 4);
+  const years = res.body.watchesPerYear.map(entry => entry.year);
+  assert.ok(years.includes(2025) && years.includes(2026));
+  // genresAvailable depends on whether a movie provider is configured in the
+  // environment, so it is asserted in the mock-provider test below, not here.
+});
+
+test('GET /profile/stats/:uid includes a genre breakdown when a provider is available', async () => {
+  const express = require('express');
+  const { createStatsRouter } = require('../../src/routes/stats');
+  const { errorHandler, notFoundHandler } = require('../../src/errors');
+
+  const user = await createUser('stats-genre-user');
+  await request(app).put('/profile/update/Completed/add_movie').set(bearer(user.token)).send({ movieId: 11 });
+  await request(app).put('/profile/update/Completed/add_movie').set(bearer(user.token)).send({ movieId: 22 });
+
+  const mockProvider = { getMovieGenres: async id => (Number(id) === 11 ? ['Action', 'Sci-Fi'] : ['Action']) };
+  const statsApp = express();
+  statsApp.use((req, res, next) => { req.id = 'stats-test'; req.log = { error() {}, warn() {} }; next(); });
+  statsApp.use('/profile/stats', createStatsRouter({ provider: () => mockProvider }));
+  statsApp.use(notFoundHandler);
+  statsApp.use(errorHandler);
+
+  const res = await request(statsApp).get(`/profile/stats/${user.uid}`);
+  assert.equal(res.status, 200);
+  assert.equal(res.body.genresAvailable, true);
+  assert.equal(res.body.topGenres[0].genre, 'Action');
+  assert.equal(res.body.topGenres[0].count, 2);
+});
