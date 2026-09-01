@@ -95,6 +95,98 @@ const parsePositiveId = (value, label = 'id') => {
 const LIST_TITLE_MAX = 100;
 const LIST_DESCRIPTION_MAX = 500;
 const LIST_NOTE_MAX = 300;
+const DIARY_NOTES_MAX = 2000;
+
+// Accepts a date string / number, returns a Date only when it parses cleanly.
+const parseDate = value => {
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+// Diary watch log: an append-only record of a single viewing (rewatches allowed).
+// watchedAt is required, a valid date, and may not be in the future.
+const validateDiaryEntry = ({ movieId, watchedAt, rating, notes, rewatch } = {}, now = Date.now()) => {
+  const errors = [];
+  const value = {};
+
+  const parsedMovieId = toInteger(movieId);
+  if (parsedMovieId === null || parsedMovieId < 1) errors.push('movieId must be a positive integer');
+  else value.movieId = parsedMovieId;
+
+  const parsedDate = parseDate(watchedAt);
+  if (!parsedDate) errors.push('watchedAt must be a valid date');
+  else if (parsedDate.getTime() > now) errors.push('watchedAt cannot be in the future');
+  else value.watchedAt = parsedDate.toISOString();
+
+  if (rating !== undefined && rating !== null && rating !== '') {
+    const parsedRating = toInteger(rating);
+    if (parsedRating === null || parsedRating < 1 || parsedRating > 5) {
+      errors.push('rating must be an integer from 1 to 5');
+    } else {
+      value.rating = parsedRating;
+    }
+  }
+
+  if (notes !== undefined && notes !== null && notes !== '') {
+    if (typeof notes !== 'string') errors.push('notes must be a string');
+    else if (notes.trim().length > DIARY_NOTES_MAX) errors.push(`notes must be at most ${DIARY_NOTES_MAX} characters`);
+    else value.notes = notes.trim();
+  }
+
+  if (rewatch !== undefined) {
+    if (typeof rewatch !== 'boolean') errors.push('rewatch must be a boolean');
+    else value.rewatch = rewatch;
+  } else {
+    value.rewatch = false;
+  }
+
+  return { valid: errors.length === 0, errors, value };
+};
+
+// Editable fields on an existing diary entry. At least one must be supplied.
+const validateDiaryUpdate = ({ watchedAt, rating, notes } = {}, now = Date.now()) => {
+  const errors = [];
+  const value = {};
+
+  if (watchedAt === undefined && rating === undefined && notes === undefined) {
+    errors.push('watchedAt, rating, or notes is required');
+  }
+
+  if (watchedAt !== undefined) {
+    const parsedDate = parseDate(watchedAt);
+    if (!parsedDate) errors.push('watchedAt must be a valid date');
+    else if (parsedDate.getTime() > now) errors.push('watchedAt cannot be in the future');
+    else value.watchedAt = parsedDate.toISOString();
+  }
+
+  if (rating !== undefined) {
+    if (rating === null || rating === '') {
+      value.rating = null;
+    } else {
+      const parsedRating = toInteger(rating);
+      if (parsedRating === null || parsedRating < 1 || parsedRating > 5) {
+        errors.push('rating must be an integer from 1 to 5');
+      } else {
+        value.rating = parsedRating;
+      }
+    }
+  }
+
+  if (notes !== undefined) {
+    if (notes === null || notes === '') {
+      value.notes = '';
+    } else if (typeof notes !== 'string') {
+      errors.push('notes must be a string');
+    } else if (notes.trim().length > DIARY_NOTES_MAX) {
+      errors.push(`notes must be at most ${DIARY_NOTES_MAX} characters`);
+    } else {
+      value.notes = notes.trim();
+    }
+  }
+
+  return { valid: errors.length === 0, errors, value };
+};
 
 const validateDescription = (description, errors, value) => {
   if (description === undefined || description === null || description === '') {
@@ -198,6 +290,7 @@ module.exports = {
   LIST_TITLE_MAX,
   LIST_DESCRIPTION_MAX,
   LIST_NOTE_MAX,
+  DIARY_NOTES_MAX,
   isNonEmptyString,
   isValidWatchStatus,
   toInteger,
@@ -210,5 +303,7 @@ module.exports = {
   validateListCreate,
   validateListUpdate,
   validateListItem,
-  validateReorder
+  validateReorder,
+  validateDiaryEntry,
+  validateDiaryUpdate
 };

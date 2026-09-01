@@ -5,6 +5,7 @@ const helmet = require('helmet');
 const { rateLimit } = require('express-rate-limit');
 const pinoHttp = require('pino-http');
 const swaggerUi = require('swagger-ui-express');
+const diaryRouter = require('./routes/diary');
 const discussionsRouter = require('./routes/discussions');
 const moviesRouter = require('./routes/movies');
 const feedRouter = require('./routes/feed');
@@ -64,6 +65,7 @@ const createApp = ({ config, logger, readinessCheck }) => {
   app.use('/follows', followsRouter);
   app.use('/lists', listsRouter);
   app.use('/news', newsRouter);
+  app.use('/profile/diary', diaryRouter);
   app.use('/profile', profileRouter);
   app.use('/reviews', reviewsRouter);
 
