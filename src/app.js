@@ -7,6 +7,8 @@ const pinoHttp = require('pino-http');
 const swaggerUi = require('swagger-ui-express');
 const discussionsRouter = require('./routes/discussions');
 const moviesRouter = require('./routes/movies');
+const feedRouter = require('./routes/feed');
+const followsRouter = require('./routes/follows');
 const newsRouter = require('./routes/news');
 const profileRouter = require('./routes/profile');
 const reviewsRouter = require('./routes/reviews');
@@ -57,6 +59,8 @@ const createApp = ({ config, logger, readinessCheck }) => {
 
   app.use('/api/movies', moviesRouter);
   app.use('/discussions', discussionsRouter);
+  app.use('/feed', feedRouter);
+  app.use('/follows', followsRouter);
   app.use('/news', newsRouter);
   app.use('/profile', profileRouter);
   app.use('/reviews', reviewsRouter);

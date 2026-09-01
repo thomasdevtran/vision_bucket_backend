@@ -38,6 +38,17 @@ const validateReview = ({ movieId, Author, content, rating } = {}) => {
   };
 };
 
+const validateFollow = ({ followeeId } = {}) => {
+  const errors = [];
+  if (!isNonEmptyString(followeeId)) errors.push('followeeId is required');
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    value: { followeeId: isNonEmptyString(followeeId) ? followeeId.trim() : followeeId }
+  };
+};
+
 const validateReviewUpdate = ({ content, rating } = {}) => {
   const errors = [];
   const value = {};
@@ -86,6 +97,7 @@ module.exports = {
   isNonEmptyString,
   isValidWatchStatus,
   toInteger,
+  validateFollow,
   validateReview,
   validateReviewUpdate,
   validateSearchQuery,

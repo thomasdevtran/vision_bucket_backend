@@ -110,6 +110,123 @@ test('public review reads return reviews for a movie without leaking the owner u
   assert.equal(missingResponse.status, 404);
 });
 
+const createProfile = async (user, username) => {
+  await db.collection('Users').doc(user.uid).set({ Username: username, username });
+};
+
+test('an unauthenticated follow attempt is rejected', async () => {
+  const response = await request(app).post('/follows').send({ followeeId: 'anyone' });
+  assert.equal(response.status, 401);
+});
+
+test('a user can follow then unfollow another user', async () => {
+  const follower = await createUser('follower');
+  const followee = await createUser('followee');
+  await createProfile(followee, 'Followee');
+
+  const followResponse = await request(app)
+    .post('/follows')
+    .set(bearer(follower.token))
+    .send({ followeeId: followee.uid });
+  assert.equal(followResponse.status, 201);
+  assert.equal(followResponse.body.follow.followerId, follower.uid);
+  assert.equal(followResponse.body.follow.followeeId, followee.uid);
+
+  // Idempotent: following again still succeeds.
+  const repeatResponse = await request(app)
+    .post('/follows')
+    .set(bearer(follower.token))
+    .send({ followeeId: followee.uid });
+  assert.equal(repeatResponse.status, 201);
+
+  const followersResponse = await request(app).get(`/follows/followers/${followee.uid}`);
+  assert.equal(followersResponse.status, 200);
+  assert.equal(followersResponse.body.count, 1);
+  assert.deepEqual(followersResponse.body.followers, [follower.uid]);
+
+  const followingResponse = await request(app).get(`/follows/following/${follower.uid}`);
+  assert.equal(followingResponse.status, 200);
+  assert.equal(followingResponse.body.count, 1);
+
+  const unfollowResponse = await request(app)
+    .delete(`/follows/${followee.uid}`)
+    .set(bearer(follower.token));
+  assert.equal(unfollowResponse.status, 200);
+
+  const afterResponse = await request(app).get(`/follows/followers/${followee.uid}`);
+  assert.equal(afterResponse.body.count, 0);
+});
+
+test('following yourself is rejected with 400', async () => {
+  const user = await createUser('self-follower');
+  await createProfile(user, 'Self');
+
+  const response = await request(app)
+    .post('/follows')
+    .set(bearer(user.token))
+    .send({ followeeId: user.uid });
+  assert.equal(response.status, 400);
+});
+
+test('following a missing user returns 404', async () => {
+  const user = await createUser('lonely');
+  const response = await request(app)
+    .post('/follows')
+    .set(bearer(user.token))
+    .send({ followeeId: 'does-not-exist-uid' });
+  assert.equal(response.status, 404);
+});
+
+test('the feed returns activity from followed users with limit/cursor pagination', async () => {
+  const reader = await createUser('feed-reader');
+  const author = await createUser('feed-author');
+  await createProfile(author, 'Author');
+
+  await request(app)
+    .post('/follows')
+    .set(bearer(reader.token))
+    .send({ followeeId: author.uid });
+
+  // Two reviews at distinct timestamps so ordering and the cursor are observable.
+  await db.collection('Reviews').doc(`feed-older-${Date.now()}`).set({
+    uid: author.uid, movieId: 11, Author: 'Author', content: 'older', rating: 4,
+    date: '2026-01-01T00:00:00.000Z'
+  });
+  await db.collection('Reviews').doc(`feed-newer-${Date.now()}`).set({
+    uid: author.uid, movieId: 22, Author: 'Author', content: 'newer', rating: 5,
+    date: '2026-02-01T00:00:00.000Z'
+  });
+
+  const firstPage = await request(app)
+    .get('/feed?limit=1')
+    .set(bearer(reader.token));
+  assert.equal(firstPage.status, 200);
+  assert.equal(firstPage.body.items.length, 1);
+  assert.equal(firstPage.body.items[0].content, 'newer');
+  assert.ok(firstPage.body.nextCursor, 'expected a nextCursor for the second page');
+
+  const secondPage = await request(app)
+    .get(`/feed?limit=1&cursor=${encodeURIComponent(firstPage.body.nextCursor)}`)
+    .set(bearer(reader.token));
+  assert.equal(secondPage.status, 200);
+  assert.equal(secondPage.body.items.length, 1);
+  assert.equal(secondPage.body.items[0].content, 'older');
+});
+
+test('the feed excludes activity from users you do not follow', async () => {
+  const reader = await createUser('isolated-reader');
+  const stranger = await createUser('stranger');
+  await createProfile(stranger, 'Stranger');
+  await db.collection('Reviews').doc(`stranger-${Date.now()}`).set({
+    uid: stranger.uid, movieId: 99, Author: 'Stranger', content: 'unfollowed', rating: 3,
+    date: '2026-03-01T00:00:00.000Z'
+  });
+
+  const response = await request(app).get('/feed').set(bearer(reader.token));
+  assert.equal(response.status, 200);
+  assert.equal(response.body.items.length, 0);
+});
+
 test('a supplied UID cannot redirect a profile write to another user', async () => {
   const victim = await createUser('victim');
   const attacker = await createUser('profile-attacker');
