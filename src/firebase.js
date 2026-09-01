@@ -32,6 +32,7 @@ const setDoc = (reference, data, options) => options
 const deleteDoc = reference => reference.delete();
 const arrayUnion = (...values) => FieldValue.arrayUnion(...values);
 const arrayRemove = (...values) => FieldValue.arrayRemove(...values);
+const runTransaction = updateFunction => db.runTransaction(updateFunction);
 const checkFirestoreReady = () => db.listCollections();
 
 module.exports = {
@@ -46,6 +47,7 @@ module.exports = {
   deleteDoc,
   arrayUnion,
   arrayRemove,
+  runTransaction,
   query,
   where,
   checkFirestoreReady

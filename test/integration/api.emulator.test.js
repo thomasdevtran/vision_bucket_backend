@@ -110,6 +110,87 @@ test('public review reads return reviews for a movie without leaking the owner u
   assert.equal(missingResponse.status, 404);
 });
 
+const postReview = async (author, movieId, extra = {}) => {
+  const response = await request(app)
+    .post('/reviews/posting')
+    .set(bearer(author.token))
+    .send({ movieId, Author: 'Author', content: 'a review', rating: 4, ...extra });
+  assert.equal(response.status, 201, JSON.stringify(response.body));
+  return response.body.id;
+};
+
+test('reacting then unreacting updates the count and reactedByMe', async () => {
+  const author = await createUser('reaction-author');
+  const reactor = await createUser('reactor');
+  const movieId = Math.floor(Math.random() * 1_000_000_000);
+  const reviewId = await postReview(author, movieId);
+
+  const react = await request(app)
+    .post(`/reviews/${reviewId}/reactions`)
+    .set(bearer(reactor.token))
+    .send({ type: 'helpful' });
+  assert.equal(react.status, 200);
+  assert.equal(react.body.reactionCount, 1);
+  assert.equal(react.body.reactedByMe, true);
+
+  const authedRead = await request(app).get(`/reviews/${reviewId}`).set(bearer(reactor.token));
+  assert.equal(authedRead.status, 200);
+  assert.equal(authedRead.body.reactionCount, 1);
+  assert.equal(authedRead.body.reactedByMe, true);
+
+  const unreact = await request(app)
+    .delete(`/reviews/${reviewId}/reactions`)
+    .set(bearer(reactor.token));
+  assert.equal(unreact.status, 200);
+  assert.equal(unreact.body.reactionCount, 0);
+  assert.equal(unreact.body.reactedByMe, false);
+});
+
+test('reacting twice is idempotent and stays at a count of 1', async () => {
+  const author = await createUser('idem-author');
+  const reactor = await createUser('idem-reactor');
+  const movieId = Math.floor(Math.random() * 1_000_000_000);
+  const reviewId = await postReview(author, movieId);
+
+  const first = await request(app).post(`/reviews/${reviewId}/reactions`).set(bearer(reactor.token)).send({});
+  assert.equal(first.status, 200);
+  assert.equal(first.body.reactionCount, 1);
+
+  const second = await request(app).post(`/reviews/${reviewId}/reactions`).set(bearer(reactor.token)).send({});
+  assert.equal(second.status, 200);
+  assert.equal(second.body.reactionCount, 1);
+});
+
+test('an unauthenticated reaction is rejected with 401', async () => {
+  const response = await request(app).post('/reviews/whatever/reactions').send({ type: 'helpful' });
+  assert.equal(response.status, 401);
+});
+
+test('reacting to a missing review returns 404', async () => {
+  const reactor = await createUser('missing-reactor');
+  const response = await request(app)
+    .post('/reviews/does-not-exist/reactions')
+    .set(bearer(reactor.token))
+    .send({ type: 'helpful' });
+  assert.equal(response.status, 404);
+});
+
+test('public movie reads expose reactionCount and isSpoiler but never the owner uid', async () => {
+  const author = await createUser('spoiler-author');
+  const movieId = Math.floor(Math.random() * 1_000_000_000);
+  await postReview(author, movieId, { isSpoiler: true });
+
+  const listResponse = await request(app).get(`/reviews/movie/${movieId}`);
+  assert.equal(listResponse.status, 200);
+  assert.equal(listResponse.body.length, 1);
+  const [review] = listResponse.body;
+  assert.equal(review.reactionCount, 0);
+  assert.equal(review.isSpoiler, true);
+  assert.equal(review.uid, undefined);
+  // No token supplied: reactedByMe is not leaked into an anonymous read.
+  assert.equal(review.reactedByMe, undefined);
+});
+
 const createProfile = async (user, username) => {
   await db.collection('Users').doc(user.uid).set({ Username: username, username });
 };
