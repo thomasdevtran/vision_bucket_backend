@@ -1,15 +1,14 @@
+@idToken = replace-with-admin-or-editor-firebase-id-token
+
 ### posts one news post
 
 POST http://localhost:5000/news/posting
 Content-Type: application/json
+Authorization: Bearer {{idToken}}
 
 {
   "Author": "John Doe",
   "Date": "20250603",
-  "Comments": [
-    {
-    }
-  ],
   "Title": "New Discussion Topic",
   "Description": "This is a description of the new discussion topic."
 }

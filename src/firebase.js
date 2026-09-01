@@ -1,21 +1,41 @@
-// Import the functions you need from the SDKs you need
-const { initializeApp } = require('firebase/app');
-const { getFirestore, collection, getDocs, where, doc, getDoc, addDoc, updateDoc, arrayUnion, query, arrayRemove, setDoc, deleteDoc} = require('firebase/firestore'); // Added addDoc
+const { FieldValue, getFirestore } = require('firebase-admin/firestore');
+const { adminApp } = require('./firebaseAdmin');
 
-// Your web app's Firebase configuration
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
-const firebaseConfig = {
-  apiKey: "AIzaSyDb0vGZ7bvxqfXoKxmJzf7htUYrfKF31kA",
-  authDomain: "inf-124-10961.firebaseapp.com",
-  databaseURL: "https://inf-124-10961-default-rtdb.firebaseio.com",
-  projectId: "inf-124-10961",
-  storageBucket: "inf-124-10961.firebasestorage.app",
-  messagingSenderId: "1038932690190",
-  appId: "1:1038932690190:web:00f9afc8f98149e5fe435f",
-  measurementId: "G-ME18D21GQY"
+const db = getFirestore(adminApp);
+
+const collection = (database, name) => database.collection(name);
+const doc = (databaseOrCollection, collectionName, id) => {
+  if (typeof databaseOrCollection.doc === 'function' && collectionName === undefined) {
+    return databaseOrCollection.doc();
+  }
+  return databaseOrCollection.collection(collectionName).doc(id);
 };
+const where = (field, operator, value) => ({ field, operator, value });
+const query = (reference, ...constraints) => constraints.reduce(
+  (current, constraint) => current.where(constraint.field, constraint.operator, constraint.value),
+  reference
+);
+const getDocs = reference => reference.get();
+const getDoc = reference => reference.get();
+const addDoc = (reference, data) => reference.add(data);
+const updateDoc = (reference, data) => reference.update(data);
+const setDoc = (reference, data, options) => reference.set(data, options);
+const deleteDoc = reference => reference.delete();
+const arrayUnion = (...values) => FieldValue.arrayUnion(...values);
+const arrayRemove = (...values) => FieldValue.arrayRemove(...values);
 
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-
-module.exports = { db, collection, getDocs, where, doc, getDoc, addDoc, updateDoc, arrayUnion, query, arrayRemove, setDoc, deleteDoc}; // Exported addDoc
+module.exports = {
+  db,
+  collection,
+  doc,
+  getDocs,
+  getDoc,
+  addDoc,
+  updateDoc,
+  setDoc,
+  deleteDoc,
+  arrayUnion,
+  arrayRemove,
+  query,
+  where
+};

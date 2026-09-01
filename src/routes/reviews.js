@@ -1,14 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const { db, collection, getDoc, doc, addDoc, updateDoc, deleteDoc } = require('../firebase');
+const { authenticate } = require('../middleware/authenticate');
 
 // POST http://localhost:5000/reviews/posting
-router.post('/posting', async (req, res) => {
+router.post('/posting', authenticate, async (req, res) => {
     try {
-        const { movieId, Author, content, rating, uid } = req.body;
+        const { movieId, Author, content, rating } = req.body;
 
         // Validate input
-        if (!movieId || !Author || !content || !rating || !uid) {
+        if (!movieId || !Author || !content || !rating) {
             return res.status(400).json({ error: "Missing required fields" });
         }
 
@@ -19,13 +20,14 @@ router.post('/posting', async (req, res) => {
             Author,
             content,
             rating: parseInt(rating), // Ensure rating is an integer
-            uid
+            uid: req.user.uid
         };
 
         // Add the new review to the "Reviews" collection
         const docRef = await addDoc(collection(db, "Reviews"), newReview);
 
-        res.status(201).json({ message: "Review added successfully", id: docRef.id, review: newReview });
+        const { uid, ...review } = newReview;
+        res.status(201).json({ message: "Review added successfully", id: docRef.id, review });
 
     } catch (error) {
         console.error("Error adding review:", error);
@@ -33,9 +35,9 @@ router.post('/posting', async (req, res) => {
     }
 });
 
-// DELETE /reviews/:docId/:uid - Delete a review if uid matches
-router.delete('/:docId/:uid', async (req, res) => {
-    const { docId, uid } = req.params;
+// DELETE /reviews/:docId - Delete a review owned by the authenticated user
+router.delete('/:docId', authenticate, async (req, res) => {
+    const { docId } = req.params;
     try {
         const reviewRef = doc(db, "Reviews", docId);
         const reviewSnap = await getDoc(reviewRef);
@@ -45,8 +47,8 @@ router.delete('/:docId/:uid', async (req, res) => {
         }
 
         const reviewData = reviewSnap.data();
-        if (reviewData.uid !== uid) {
-            return res.status(403).json({ error: "Unauthorized: UID does not match" });
+        if (reviewData.uid !== req.user.uid) {
+            return res.status(403).json({ error: "Unauthorized: You are not allowed to delete this review" });
         }
 
         await deleteDoc(reviewRef);
@@ -57,9 +59,9 @@ router.delete('/:docId/:uid', async (req, res) => {
     }
 });
 
-// PATCH /reviews/:docId/:uid - Update content and rating if uid matches
-router.patch('/:docId/:uid', async (req, res) => {
-    const { docId, uid } = req.params;
+// PATCH /reviews/:docId - Update a review owned by the authenticated user
+router.patch('/:docId', authenticate, async (req, res) => {
+    const { docId } = req.params;
     const { content, rating } = req.body;
     try {
         const reviewRef = doc(db, "Reviews", docId);
@@ -70,8 +72,8 @@ router.patch('/:docId/:uid', async (req, res) => {
         }
 
         const reviewData = reviewSnap.data();
-        if (reviewData.uid !== uid) {
-            return res.status(403).json({ error: "Unauthorized: UID does not match" });
+        if (reviewData.uid !== req.user.uid) {
+            return res.status(403).json({ error: "Unauthorized: You are not allowed to update this review" });
         }
 
         const updateData = {};

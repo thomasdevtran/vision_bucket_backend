@@ -1,6 +1,21 @@
 const express = require('express');
 const router = express.Router();
-const { db, collection, getDocs, doc, getDoc, addDoc, updateDoc, arrayUnion } = require('../firebase');
+const { db, collection, getDocs, doc, getDoc, addDoc } = require('../firebase');
+const { authenticate, requireRole } = require('../middleware/authenticate');
+const { createComment, listCommentRecords, mergeWithLegacyComments } = require('../data/comments');
+
+const PARENT_TYPE = 'news_post';
+
+const serializePost = (id, data) => {
+  const { uid, Comments, ...post } = data;
+  return {
+    id,
+    ...post,
+    Comments: Array.isArray(Comments)
+      ? Comments.map(({ uid, ...comment }) => comment)
+      : []
+  };
+};
 
 // GET http://localhost:5000/news/posts (fetches all ID, author, date, title, description)
 router.get('/posts', async (req, res) => {
@@ -37,10 +52,12 @@ router.get('/post/:docId', async (req, res) => {
       return res.status(404).json({ error: "Document not found" });
     }
 
-    res.status(200).json({
-      id: docSnap.id,
-      ...docSnap.data()
-    });
+    const post = docSnap.data();
+    const comments = await listCommentRecords(PARENT_TYPE, docId);
+    res.status(200).json(serializePost(docSnap.id, {
+      ...post,
+      Comments: mergeWithLegacyComments(comments, post.Comments)
+    }));
     
   } catch (error) {
     console.error("Error fetching document:", error);
@@ -61,9 +78,9 @@ router.get('/post/:docId', async (req, res) => {
 //   "Title": "New Discussion Topic",
 //   "Description": "This is a description of the new discussion topic."
 // }
-router.post('/posting', async (req, res) => {
+router.post('/posting', authenticate, requireRole('admin', 'editor'), async (req, res) => {
   try {
-    const { Author, Date, Comments, Title, Description } = req.body;
+    const { Author, Date, Title, Description } = req.body;
 
     if (!Author || !Date || !Title || !Description) {
       return res.status(400).json({ error: "All fields (Author, Date, Title, Description) are required" });
@@ -71,8 +88,8 @@ router.post('/posting', async (req, res) => {
 
     const newPost = {
       Author,
+      uid: req.user.uid,
       Date,
-      Comments: Comments || [],
       Title,
       Description
     };
@@ -87,7 +104,7 @@ router.post('/posting', async (req, res) => {
 });
 
 // POST http://localhost:5000/news/post/:docId/comment
-router.post('/post/:docId/comment', async (req, res) => {
+router.post('/post/:docId/comment', authenticate, async (req, res) => {
   try {
     const docId = req.params.docId;
     const { author, content, date } = req.body;
@@ -99,18 +116,18 @@ router.post('/post/:docId/comment', async (req, res) => {
     if (!docSnap.exists()) {
       return res.status(404).json({ error: "News post not found" });
     }
-    const newComment = {
+    const newComment = await createComment({
+      parentType: PARENT_TYPE,
+      parentId: docId,
+      authorId: req.user.uid,
       author,
       content,
-      date,
-      commentId: Date.now().toString()
-    };
-    await updateDoc(docRef, {
-      Comments: arrayUnion(newComment)
+      date
     });
+    const { uid, ...comment } = newComment;
     res.status(201).json({ 
       message: "Comment added successfully",
-      comment: newComment 
+      comment
     });
   } catch (error) {
     console.error("Error adding comment:", error);

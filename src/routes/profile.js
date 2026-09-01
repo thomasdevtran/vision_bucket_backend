@@ -1,6 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const { db, doc, updateDoc, arrayUnion, arrayRemove, setDoc, getDoc } = require('../firebase'); // Use db from firebase.js
+const { authenticate } = require('../middleware/authenticate');
+const {
+    VALID_STATUSES,
+    listWatchEntries,
+    mergeProfileWithWatchEntries,
+    removeWatchEntry,
+    upsertWatchEntry
+} = require('../data/watchEntries');
 
 // Middleware to handle errors
 const asyncHandler = fn => (req, res, next) => {
@@ -20,7 +28,8 @@ router.get('/data/:uid', async (req, res) => {
             return res.status(404).json({ error: "User not found" });
         }
 
-        res.status(200).json(docSnap.data());
+        const watchEntries = await listWatchEntries(uid);
+        res.status(200).json(mergeProfileWithWatchEntries(docSnap.data(), watchEntries));
 
     } catch (error) {
         console.error("Error fetching document:", error);
@@ -28,9 +37,15 @@ router.get('/data/:uid', async (req, res) => {
     }
 });
 
-// PUT http://localhost:5000/profile/update/:uid/last_online
-router.put('/update/:uid/last_online', asyncHandler(async (req, res) => {
-    const { uid } = req.params;
+// GET http://localhost:5000/profile/watch_entries/:uid
+router.get('/watch_entries/:uid', asyncHandler(async (req, res) => {
+    const entries = await listWatchEntries(req.params.uid);
+    res.status(200).json(entries);
+}));
+
+// PUT http://localhost:5000/profile/update/last_online
+router.put('/update/last_online', authenticate, asyncHandler(async (req, res) => {
+    const uid = req.user.uid;
     const { last_online } = req.body;
     if (!last_online) {
         return res.status(400).json({ error: "Last_online is required" });
@@ -40,42 +55,44 @@ router.put('/update/:uid/last_online', asyncHandler(async (req, res) => {
     res.status(200).json({ message: "Last online updated successfully" });
 }));
 
-// PUT http://localhost:5000/profile/update/:uid/:status/add_movie
-router.put('/update/:uid/:status/add_movie', asyncHandler(async (req, res) => {
-    const { uid, status } = req.params;
-    const { movieId } = req.body;
+// PUT http://localhost:5000/profile/update/:status/add_movie
+router.put('/update/:status/add_movie', authenticate, asyncHandler(async (req, res) => {
+    const uid = req.user.uid;
+    const { status } = req.params;
+    const { movieId, watchedAt, rating, progress, notes } = req.body;
     if (!movieId) {
         return res.status(400).json({ error: "MovieId is required" });
     }
-    const validStatuses = ['Completed', 'Dropped', 'On_hold', 'Plan_to_watch', 'Rewatched'];
-    if (!validStatuses.includes(status)) {
+    if (!VALID_STATUSES.includes(status)) {
         return res.status(400).json({ error: "Invalid status" });
     }
-    const userRef = doc(db, "Users", uid);
-    await updateDoc(userRef, { [status]: arrayUnion(movieId) });
-    res.status(200).json({ message: "Movie added successfully" });
+    const entry = await upsertWatchEntry({ userId: uid, movieId, status, watchedAt, rating, progress, notes });
+    res.status(200).json({ message: "Movie added successfully", entry });
 }));
 
-// PUT http://localhost:5000/profile/update/:uid/:status/remove_movie
-router.put('/update/:uid/:status/remove_movie', asyncHandler(async (req, res) => {
-    const { uid, status } = req.params;
+// PUT http://localhost:5000/profile/update/:status/remove_movie
+router.put('/update/:status/remove_movie', authenticate, asyncHandler(async (req, res) => {
+    const uid = req.user.uid;
+    const { status } = req.params;
     const { movieId } = req.body;
     if (!movieId) {
         return res.status(400).json({ error: "MovieId is required" });
     }
-    const validStatuses = ['Completed', 'Dropped', 'On_hold', 'Plan_to_watch', 'Rewatched'];
-    if (!validStatuses.includes(status)) {
+    if (!VALID_STATUSES.includes(status)) {
         return res.status(400).json({ error: "Invalid status" });
     }
+    await removeWatchEntry({ userId: uid, movieId, status });
+
+    // Shrink legacy data during the compatibility window without rewriting an array.
     const userRef = doc(db, "Users", uid);
     await updateDoc(userRef, { [status]: arrayRemove(movieId) });
     res.status(200).json({ message: "Movie removed successfully" });
 }))
 
 
-// PUT http://localhost:5000/profile/update/:uid/add_review
-router.put('/update/:uid/add_review', asyncHandler(async (req, res) => {
-    const { uid } = req.params;
+// PUT http://localhost:5000/profile/update/add_review
+router.put('/update/add_review', authenticate, asyncHandler(async (req, res) => {
+    const uid = req.user.uid;
     const { reviewId } = req.body;
     if (!reviewId) {
         return res.status(400).json({ error: "ReviewId is required" });
@@ -85,9 +102,9 @@ router.put('/update/:uid/add_review', asyncHandler(async (req, res) => {
     res.status(200).json({ message: "Review added successfully" });
 }));
 
-// PUT http://localhost:5000/profile/update/:uid/remove_review
-router.put('/update/:uid/remove_review', asyncHandler(async (req, res) => {
-    const { uid } = req.params;
+// PUT http://localhost:5000/profile/update/remove_review
+router.put('/update/remove_review', authenticate, asyncHandler(async (req, res) => {
+    const uid = req.user.uid;
     const { reviewId } = req.body;
     if (!reviewId) {
         return res.status(400).json({ error: "ReviewId is required" });
@@ -97,10 +114,11 @@ router.put('/update/:uid/remove_review', asyncHandler(async (req, res) => {
     res.status(200).json({ message: "Review removed successfully" });
 }));
 
-// POST http://localhost:5000/profile/create/:uid
-router.post('/create/:uid', asyncHandler(async (req, res) => {
-    const { uid } = req.params;
-    const userData = req.body;
+// POST http://localhost:5000/profile/create
+router.post('/create', authenticate, asyncHandler(async (req, res) => {
+    const uid = req.user.uid;
+    const userData = { ...req.body };
+    delete userData.uid;
 
     try {
         await setDoc(doc(db, "Users", uid), userData);

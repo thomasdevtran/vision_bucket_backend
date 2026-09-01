@@ -1,18 +1,35 @@
 {
   "name": "express-backend",
   "version": "1.0.0",
-  "main": "server.js",
+  "private": true,
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node src/server.js",
-    "devstart": "nodemon src/server.js"
+    "dev": "nodemon src/server.js",
+    "devstart": "nodemon src/server.js",
+    "test": "node --test",
+    "migrate:normalized": "node scripts/migrate-normalized-records.js",
+    "audit:prod": "npm audit --omit=dev --audit-level=high"
   },
   "dependencies": {
-    "@firebase/app": "^0.13.0",
-    "@firebase/firestore": "^4.7.16",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
-    "firebase": "^11.9.0",
-    "nodemon": "^3.1.10"
+    "firebase-admin": "^14.3.0",
+    "express-rate-limit": "^8.7.0",
+    "helmet": "^8.3.0",
+    "pino": "^10.3.1",
+    "pino-http": "^11.0.0",
+    "swagger-ui-express": "^5.0.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.9.1",
+    "firebase-tools": "^15.28.2",
+    "nodemon": "^3.1.10",
+    "supertest": "^7.2.2"
   }
 }

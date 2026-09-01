@@ -1,7 +1,29 @@
 // routes/discussions.js
 const express = require('express');
 const router = express.Router();
-const { db, collection, getDocs, doc, getDoc, addDoc, updateDoc, arrayUnion, deleteDoc } = require('../firebase'); // Use db from firebase.js
+const { db, collection, getDocs, doc, getDoc, addDoc, updateDoc, arrayRemove, deleteDoc } = require('../firebase');
+const { authenticate } = require('../middleware/authenticate');
+const {
+  createComment,
+  deleteComment,
+  deleteCommentsForParent,
+  findComment,
+  listCommentRecords,
+  mergeWithLegacyComments
+} = require('../data/comments');
+
+const PARENT_TYPE = 'discussion_post';
+
+const serializePost = (id, data) => {
+  const { uid, Comments, ...post } = data;
+  return {
+    id,
+    ...post,
+    Comments: Array.isArray(Comments)
+      ? Comments.map(({ uid, ...comment }) => comment)
+      : []
+  };
+};
 
 // GET http://localhost:5000/discussions/posts (fetches all ID, author, date, title, description)
 router.get('/posts', async (req, res) => {
@@ -11,11 +33,10 @@ router.get('/posts', async (req, res) => {
             const data = doc.data();
             return {
                 id: doc.id,
-                uid: data.uid,
-                Author: data.Author,   // Author name
-                Date: data.Date,       // Post date
-                Title: data.Title,      // Post title
-                Description: data.Description // Post description
+                Author: data.Author,
+                Date: data.Date,
+                Title: data.Title,
+                Description: data.Description
             };
         });
         
@@ -39,10 +60,12 @@ router.get('/post/:docId', async (req, res) => {
       return res.status(404).json({ error: "Document not found" });
     }
 
-    res.status(200).json({
-      id: docSnap.id,
-      ...docSnap.data()
-    });
+    const post = docSnap.data();
+    const comments = await listCommentRecords(PARENT_TYPE, docId);
+    res.status(200).json(serializePost(docSnap.id, {
+      ...post,
+      Comments: mergeWithLegacyComments(comments, post.Comments)
+    }));
     
   } catch (error) {
     console.error("Error fetching document:", error);
@@ -66,21 +89,20 @@ router.get('/post/:docId', async (req, res) => {
 // }
 
 
-router.post('/posting', async (req, res) => {
+router.post('/posting', authenticate, async (req, res) => {
   try {
-    const { Author, uid, Date, Comments, Title, Description } = req.body;
+    const { Author, Date, Title, Description } = req.body;
 
     // Validate required fields
-    if (!Author || !uid || !Date || !Title || !Description) {
+    if (!Author || !Date || !Title || !Description) {
       return res.status(400).json({ error: "All fields (Author, Date, Title, Description) are required" });
     }
 
     // Add a new document to the collection
     const newPost = {
       Author,
-      uid,
+      uid: req.user.uid,
       Date,
-      Comments: Comments || [], // Use provided Comments array or default to empty array
       Title,
       Description
     };
@@ -95,10 +117,10 @@ router.post('/posting', async (req, res) => {
 });
 
 // POST http://localhost:5000/discussions/post/:docId/comment
-router.post('/post/:docId/comment', async (req, res) => {
+router.post('/post/:docId/comment', authenticate, async (req, res) => {
   try {
     const docId = req.params.docId;
-    const { author, uid, content, date } = req.body;
+    const { author, content, date } = req.body;
     if (!author || !content || !date) {
       return res.status(400).json({ error: "Author, content, and date are required for comments" });
     }
@@ -107,19 +129,18 @@ router.post('/post/:docId/comment', async (req, res) => {
     if (!docSnap.exists()) {
       return res.status(404).json({ error: "Discussion post not found" });
     }
-    const newComment = {
+    const newComment = await createComment({
+      parentType: PARENT_TYPE,
+      parentId: docId,
+      authorId: req.user.uid,
       author,
-      uid,
       content,
-      date,
-      commentId: Date.now().toString() // Unique identifier for the comment
-    };
-    await updateDoc(docRef, {
-      Comments: arrayUnion(newComment)
+      date
     });
+    const { uid, ...comment } = newComment;
     res.status(201).json({ 
       message: "Comment added successfully",
-      comment: newComment 
+      comment
     });
   } catch (error) {
     console.error("Error adding comment:", error);
@@ -127,15 +148,13 @@ router.post('/post/:docId/comment', async (req, res) => {
   }
 });
 
-// DELETE http://localhost:5000/discussions/post/:docId/:uid (deletes a specific post by ID, requires authentication)
-router.delete('/post/:docId/:uid', async (req, res) => {
+// DELETE http://localhost:5000/discussions/post/:docId
+router.delete('/post/:docId', authenticate, async (req, res) => {
     try {
         const docId = req.params.docId;
-        const uid = req.params.uid;
 
-        // Validate that docId and uid are provided
-        if (!docId || !uid) {
-            return res.status(400).json({ error: "Document ID and User ID are required" });
+        if (!docId) {
+            return res.status(400).json({ error: "Document ID is required" });
         }
 
         const docRef = doc(db, "Disc_Posts", docId);
@@ -147,11 +166,11 @@ router.delete('/post/:docId/:uid', async (req, res) => {
         }
 
         // Check if the user ID matches the post's user ID
-        if (docSnap.data().uid !== uid) {
+        if (docSnap.data().uid !== req.user.uid) {
             return res.status(403).json({ error: "Unauthorized: You are not allowed to delete this post" });
         }
 
-        // Delete the document
+        await deleteCommentsForParent(PARENT_TYPE, docId);
         await deleteDoc(docRef);
 
         res.status(200).json({ message: "Discussion post deleted successfully" });
@@ -162,16 +181,14 @@ router.delete('/post/:docId/:uid', async (req, res) => {
     }
 });
 
-// DELETE http://localhost:5000/discussions/comment/:docId/:commentId/:uid (deletes a specific comment by ID, requires authentication)
-router.delete('/comment/:docId/:commentId/:uid', async (req, res) => {
+// DELETE http://localhost:5000/discussions/comment/:docId/:commentId
+router.delete('/comment/:docId/:commentId', authenticate, async (req, res) => {
     try {
         const docId = req.params.docId;
         const commentId = req.params.commentId;
-        const uid = req.params.uid;
 
-        // Validate that docId, commentId, and uid are provided
-        if (!docId || !commentId || !uid) {
-            return res.status(400).json({ error: "Document ID, Comment ID, and User ID are required" });
+        if (!docId || !commentId) {
+            return res.status(400).json({ error: "Document ID and Comment ID are required" });
         }
 
         const docRef = doc(db, "Disc_Posts", docId);
@@ -182,27 +199,23 @@ router.delete('/comment/:docId/:commentId/:uid', async (req, res) => {
             return res.status(404).json({ error: "Discussion post not found" });
         }
 
-        const comments = docSnap.data().Comments;
-        if (!comments) {
-            return res.status(404).json({ error: "No comments found for this post" });
+        const comment = await findComment(PARENT_TYPE, docId, commentId);
+        if (comment) {
+            if (comment.authorId !== req.user.uid) {
+                return res.status(403).json({ error: "Unauthorized: You are not allowed to delete this comment" });
+            }
+            await deleteComment(comment);
+        } else {
+            // Compatibility path until every legacy array has been migrated.
+            const legacyComment = (docSnap.data().Comments || []).find(item => item.commentId === commentId);
+            if (!legacyComment) {
+                return res.status(404).json({ error: "Comment not found" });
+            }
+            if (legacyComment.uid !== req.user.uid) {
+                return res.status(403).json({ error: "Unauthorized: You are not allowed to delete this comment" });
+            }
+            await updateDoc(docRef, { Comments: arrayRemove(legacyComment) });
         }
-
-        // Find the comment to delete
-        const commentIndex = comments.findIndex(comment => comment.commentId === commentId);
-        if (commentIndex === -1) {
-            return res.status(404).json({ error: "Comment not found" });
-        }
-
-        // Check if the user ID matches the comment's user ID
-        if (comments[commentIndex].uid !== uid) {
-            return res.status(403).json({ error: "Unauthorized: You are not allowed to delete this comment" });
-        }
-
-        // Remove the comment from the array
-        comments.splice(commentIndex, 1);
-
-        // Update the document with the modified comments array
-        await updateDoc(docRef, { Comments: comments });
 
         res.status(200).json({ message: "Comment deleted successfully" });
 
