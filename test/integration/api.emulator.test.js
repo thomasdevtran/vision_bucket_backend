@@ -106,3 +106,197 @@ test('a supplied UID cannot redirect a profile write to another user', async () 
   assert.equal(attackerProfile.Username, 'attacker-profile');
   assert.equal(attackerProfile.uid, undefined);
 });
+
+test('an owner creates a list, adds items, and a reorder persists', async () => {
+  const owner = await createUser('list-owner');
+
+  const created = await request(app)
+    .post('/lists')
+    .set(bearer(owner.token))
+    .send({ title: 'Top Sci-Fi', description: 'The best', isPublic: false });
+  assert.equal(created.status, 201);
+  assert.equal(created.body.ownerId, owner.uid);
+  assert.deepEqual(created.body.items, []);
+  const listId = created.body.id;
+
+  for (const movieId of [11, 22, 33]) {
+    const added = await request(app)
+      .post(`/lists/${listId}/items`)
+      .set(bearer(owner.token))
+      .send({ movieId });
+    assert.equal(added.status, 201);
+  }
+
+  const duplicate = await request(app)
+    .post(`/lists/${listId}/items`)
+    .set(bearer(owner.token))
+    .send({ movieId: 11 });
+  assert.equal(duplicate.status, 409);
+
+  const reordered = await request(app)
+    .patch(`/lists/${listId}/items`)
+    .set(bearer(owner.token))
+    .send({ order: [33, 11, 22] });
+  assert.equal(reordered.status, 200);
+  assert.deepEqual(reordered.body.items.map(item => item.movieId), [33, 11, 22]);
+  assert.deepEqual(reordered.body.items.map(item => item.position), [1, 2, 3]);
+
+  const removed = await request(app)
+    .delete(`/lists/${listId}/items/11`)
+    .set(bearer(owner.token));
+  assert.equal(removed.status, 200);
+  assert.deepEqual(removed.body.items.map(item => item.movieId), [33, 22]);
+  assert.deepEqual(removed.body.items.map(item => item.position), [1, 2]);
+
+  const fetched = await request(app).get(`/lists/${listId}`).set(bearer(owner.token));
+  assert.equal(fetched.status, 200);
+  assert.deepEqual(fetched.body.items.map(item => item.movieId), [33, 22]);
+});
+
+test('a non-collaborator cannot edit or delete and cannot see a private list', async () => {
+  const owner = await createUser('private-owner');
+  const stranger = await createUser('stranger');
+
+  const created = await request(app)
+    .post('/lists')
+    .set(bearer(owner.token))
+    .send({ title: 'Secret picks', isPublic: false });
+  const listId = created.body.id;
+
+  const view = await request(app).get(`/lists/${listId}`).set(bearer(stranger.token));
+  assert.equal(view.status, 404);
+
+  const anonView = await request(app).get(`/lists/${listId}`);
+  assert.equal(anonView.status, 404);
+
+  const edit = await request(app)
+    .patch(`/lists/${listId}`)
+    .set(bearer(stranger.token))
+    .send({ title: 'hijacked' });
+  assert.equal(edit.status, 404);
+
+  const del = await request(app)
+    .delete(`/lists/${listId}`)
+    .set(bearer(stranger.token));
+  assert.equal(del.status, 404);
+
+  const persisted = (await db.collection('lists').doc(listId).get()).data();
+  assert.equal(persisted.title, 'Secret picks');
+});
+
+test('a collaborator can edit but cannot delete or manage collaborators', async () => {
+  const owner = await createUser('collab-owner');
+  const collaborator = await createUser('collaborator');
+  const outsider = await createUser('collab-outsider');
+  await db.collection('Users').doc(collaborator.uid).set({ Username: 'collab' });
+  await db.collection('Users').doc(outsider.uid).set({ Username: 'outsider' });
+
+  const created = await request(app)
+    .post('/lists')
+    .set(bearer(owner.token))
+    .send({ title: 'Shared', isPublic: false });
+  const listId = created.body.id;
+
+  const addCollab = await request(app)
+    .post(`/lists/${listId}/collaborators`)
+    .set(bearer(owner.token))
+    .send({ uid: collaborator.uid });
+  assert.equal(addCollab.status, 200);
+  assert.ok(addCollab.body.collaboratorIds.includes(collaborator.uid));
+
+  // owner cannot be added as a collaborator
+  const ownerAsCollab = await request(app)
+    .post(`/lists/${listId}/collaborators`)
+    .set(bearer(owner.token))
+    .send({ uid: owner.uid });
+  assert.equal(ownerAsCollab.status, 400);
+
+  // unknown user rejected
+  const unknownCollab = await request(app)
+    .post(`/lists/${listId}/collaborators`)
+    .set(bearer(owner.token))
+    .send({ uid: 'does-not-exist-uid' });
+  assert.equal(unknownCollab.status, 404);
+
+  // collaborator can view and edit
+  const view = await request(app).get(`/lists/${listId}`).set(bearer(collaborator.token));
+  assert.equal(view.status, 200);
+
+  const edit = await request(app)
+    .patch(`/lists/${listId}`)
+    .set(bearer(collaborator.token))
+    .send({ description: 'edited by collaborator' });
+  assert.equal(edit.status, 200);
+  assert.equal(edit.body.description, 'edited by collaborator');
+
+  const addItem = await request(app)
+    .post(`/lists/${listId}/items`)
+    .set(bearer(collaborator.token))
+    .send({ movieId: 77 });
+  assert.equal(addItem.status, 201);
+
+  // collaborator cannot delete the list
+  const del = await request(app).delete(`/lists/${listId}`).set(bearer(collaborator.token));
+  assert.equal(del.status, 403);
+
+  // collaborator cannot manage collaborators
+  const manage = await request(app)
+    .post(`/lists/${listId}/collaborators`)
+    .set(bearer(collaborator.token))
+    .send({ uid: outsider.uid });
+  assert.equal(manage.status, 403);
+
+  // owner removes the collaborator
+  const removeCollab = await request(app)
+    .delete(`/lists/${listId}/collaborators/${collaborator.uid}`)
+    .set(bearer(owner.token));
+  assert.equal(removeCollab.status, 200);
+  assert.equal(removeCollab.body.collaboratorIds.includes(collaborator.uid), false);
+
+  // after removal the former collaborator loses access
+  const lostView = await request(app).get(`/lists/${listId}`).set(bearer(collaborator.token));
+  assert.equal(lostView.status, 404);
+});
+
+test('list mutations reject unauthenticated callers with 401', async () => {
+  const create = await request(app).post('/lists').send({ title: 'nope' });
+  assert.equal(create.status, 401);
+
+  const patch = await request(app).patch('/lists/whatever').send({ title: 'nope' });
+  assert.equal(patch.status, 401);
+
+  const addItem = await request(app).post('/lists/whatever/items').send({ movieId: 1 });
+  assert.equal(addItem.status, 401);
+
+  const del = await request(app).delete('/lists/whatever');
+  assert.equal(del.status, 401);
+});
+
+test('GET /lists/user/:uid shows public lists to strangers and all lists to the owner', async () => {
+  const owner = await createUser('feed-owner');
+  const stranger = await createUser('feed-stranger');
+
+  const publicList = await request(app)
+    .post('/lists')
+    .set(bearer(owner.token))
+    .send({ title: 'Public favourites', isPublic: true });
+  assert.equal(publicList.status, 201);
+
+  const privateList = await request(app)
+    .post('/lists')
+    .set(bearer(owner.token))
+    .send({ title: 'Private stash', isPublic: false });
+  assert.equal(privateList.status, 201);
+
+  const strangerView = await request(app).get(`/lists/user/${owner.uid}`).set(bearer(stranger.token));
+  assert.equal(strangerView.status, 200);
+  const strangerTitles = strangerView.body.map(list => list.title);
+  assert.ok(strangerTitles.includes('Public favourites'));
+  assert.equal(strangerTitles.includes('Private stash'), false);
+
+  const ownerView = await request(app).get(`/lists/user/${owner.uid}`).set(bearer(owner.token));
+  assert.equal(ownerView.status, 200);
+  const ownerTitles = ownerView.body.map(list => list.title);
+  assert.ok(ownerTitles.includes('Public favourites'));
+  assert.ok(ownerTitles.includes('Private stash'));
+});
