@@ -17,6 +17,7 @@ const { auth } = require('../firebaseAdmin');
 const { authenticate } = require('../middleware/authenticate');
 const { AppError } = require('../errors');
 const { validateReview, validateReviewUpdate } = require('../validation');
+const { createNotification } = require('../data/notifications');
 
 const REACTIONS = 'review_reactions';
 const DEFAULT_REACTION_TYPE = 'helpful';
@@ -150,18 +151,19 @@ router.post('/:docId/reactions', authenticate, async (req, res) => {
         const reviewRef = doc(db, "Reviews", docId);
         const reactionRef = doc(db, REACTIONS, reactionId(docId, req.user.uid));
 
-        const reactionCount = await runTransaction(async (transaction) => {
+        const result = await runTransaction(async (transaction) => {
             const reviewSnap = await transaction.get(reviewRef);
             if (!reviewSnap.exists) throw new AppError(404, 'not_found', 'Review not found');
             const reactionSnap = await transaction.get(reactionRef);
 
             const current = Number(reviewSnap.data().reactionCount);
             const base = Number.isFinite(current) && current > 0 ? current : 0;
+            const authorUid = reviewSnap.data().uid;
 
             if (reactionSnap.exists) {
                 // Idempotent: reacting again is a no-op for the count; keep the type fresh.
                 transaction.update(reactionRef, { type });
-                return base;
+                return { reactionCount: base, created: false, authorUid };
             }
             transaction.set(reactionRef, {
                 reviewId: docId,
@@ -170,10 +172,26 @@ router.post('/:docId/reactions', authenticate, async (req, res) => {
                 createdAt: new Date().toISOString()
             });
             transaction.update(reviewRef, { reactionCount: base + 1 });
-            return base + 1;
+            return { reactionCount: base + 1, created: true, authorUid };
         });
 
-        res.status(200).json({ message: "Reaction saved", reactionCount, reactedByMe: true });
+        // Notify the review author on a genuinely new reaction. Guarded so a
+        // notification failure never fails the reaction.
+        if (result.created && result.authorUid) {
+            try {
+                await createNotification({
+                    userId: result.authorUid,
+                    type: 'reaction',
+                    actorUid: req.user.uid,
+                    entityType: 'review',
+                    entityId: docId
+                });
+            } catch (notifyError) {
+                console.error("Failed to create reaction notification:", notifyError);
+            }
+        }
+
+        res.status(200).json({ message: "Reaction saved", reactionCount: result.reactionCount, reactedByMe: true });
     } catch (error) {
         if (error instanceof AppError) {
             return res.status(error.status).json({ error: error.message });

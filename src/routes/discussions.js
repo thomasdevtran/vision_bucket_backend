@@ -11,6 +11,7 @@ const {
   listCommentRecords,
   mergeWithLegacyComments
 } = require('../data/comments');
+const { createNotification } = require('../data/notifications');
 
 const PARENT_TYPE = 'discussion_post';
 
@@ -132,6 +133,21 @@ router.post('/post/:docId/comment', authenticate, async (req, res) => {
       content,
       date
     });
+
+    // Notify the thread author. Guarded so a notification failure never fails the comment.
+    try {
+      await createNotification({
+        userId: docSnap.data().uid,
+        type: 'comment',
+        actorUid: req.user.uid,
+        actorName: author,
+        entityType: 'discussion',
+        entityId: docId
+      });
+    } catch (notifyError) {
+      console.error("Failed to create comment notification:", notifyError);
+    }
+
     const { uid: _uid, ...comment } = newComment;
     res.status(201).json({ 
       message: "Comment added successfully",

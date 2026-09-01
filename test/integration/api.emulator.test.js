@@ -3,6 +3,10 @@ const assert = require('node:assert/strict');
 const request = require('supertest');
 
 process.env.NODE_ENV = 'test';
+// The whole suite shares one app instance and therefore one rate-limit window;
+// lift the per-window cap so the growing set of integration requests is never
+// throttled mid-run (production still uses the RATE_LIMIT_MAX default).
+process.env.RATE_LIMIT_MAX = process.env.RATE_LIMIT_MAX || '100000';
 
 const { createApp } = require('../../src/app');
 const { loadConfig } = require('../../src/config');
@@ -695,4 +699,167 @@ test('GET /recommendations ranks candidates from seeded watch history (provider 
   assert.ok(!ids.includes(500), 'watched movie must be excluded');
   assert.equal(ids[0], 900, 'affinity-genre title ranks first');
   assert.ok(ids.includes(700));
+});
+
+test('unauthenticated notification calls are rejected with 401', async () => {
+  assert.equal((await request(app).get('/notifications')).status, 401);
+  assert.equal((await request(app).post('/notifications/anything/read')).status, 401);
+  assert.equal((await request(app).post('/notifications/read-all')).status, 401);
+});
+
+test('following a user creates a follow notification for the followee', async () => {
+  const follower = await createUser('notify-follower');
+  const followee = await createUser('notify-followee');
+  await createProfile(follower, 'Ada');
+  await createProfile(followee, 'Grace');
+
+  const followResponse = await request(app)
+    .post('/follows')
+    .set(bearer(follower.token))
+    .send({ followeeId: followee.uid });
+  assert.equal(followResponse.status, 201);
+
+  const inbox = await request(app).get('/notifications').set(bearer(followee.token));
+  assert.equal(inbox.status, 200);
+  assert.equal(inbox.body.unreadCount, 1);
+  assert.equal(inbox.body.notifications.length, 1);
+  const [notification] = inbox.body.notifications;
+  assert.equal(notification.type, 'follow');
+  assert.equal(notification.userId, followee.uid);
+  assert.equal(notification.actorUid, follower.uid);
+  assert.equal(notification.actorName, 'Ada');
+  assert.equal(notification.read, false);
+  // The follower is the actor, not a recipient, so their own inbox stays empty.
+  const followerInbox = await request(app).get('/notifications').set(bearer(follower.token));
+  assert.equal(followerInbox.body.unreadCount, 0);
+});
+
+test('a follow still succeeds and notifies even when the follower has no profile', async () => {
+  const follower = await createUser('profileless-follower');
+  const followee = await createUser('resilient-followee');
+  await createProfile(followee, 'Katherine');
+  // No profile doc for the follower: actorName resolution finds nothing but the
+  // follow must still succeed and a notification must still be written.
+  const followResponse = await request(app)
+    .post('/follows')
+    .set(bearer(follower.token))
+    .send({ followeeId: followee.uid });
+  assert.equal(followResponse.status, 201);
+
+  const inbox = await request(app).get('/notifications').set(bearer(followee.token));
+  assert.equal(inbox.body.unreadCount, 1);
+  assert.equal(inbox.body.notifications[0].actorName, null);
+});
+
+test('reacting to another user\'s review notifies the author; reacting to your own does not', async () => {
+  const author = await createUser('review-author-notify');
+  const reactor = await createUser('review-reactor-notify');
+  await createProfile(reactor, 'Reactor');
+  const movieId = Math.floor(Math.random() * 1_000_000_000);
+  const reviewId = await postReview(author, movieId);
+
+  // Author reacts to their own review: no self-notification.
+  const selfReact = await request(app)
+    .post(`/reviews/${reviewId}/reactions`)
+    .set(bearer(author.token))
+    .send({ type: 'helpful' });
+  assert.equal(selfReact.status, 200);
+  const authorInbox = await request(app).get('/notifications').set(bearer(author.token));
+  assert.equal(authorInbox.body.unreadCount, 0);
+  assert.equal(authorInbox.body.notifications.length, 0);
+
+  // A different user reacts: the author is notified once.
+  const react = await request(app)
+    .post(`/reviews/${reviewId}/reactions`)
+    .set(bearer(reactor.token))
+    .send({ type: 'helpful' });
+  assert.equal(react.status, 200);
+
+  // Reacting again is idempotent and must not create a duplicate notification.
+  await request(app).post(`/reviews/${reviewId}/reactions`).set(bearer(reactor.token)).send({});
+
+  const afterInbox = await request(app).get('/notifications').set(bearer(author.token));
+  assert.equal(afterInbox.body.unreadCount, 1);
+  assert.equal(afterInbox.body.notifications.length, 1);
+  const [notification] = afterInbox.body.notifications;
+  assert.equal(notification.type, 'reaction');
+  assert.equal(notification.actorUid, reactor.uid);
+  assert.equal(notification.entityType, 'review');
+  assert.equal(notification.entityId, reviewId);
+});
+
+test('GET /notifications is newest-first with a correct unreadCount and cursor pagination', async () => {
+  const recipient = await createUser('inbox-owner');
+  await createProfile(recipient, 'Recipient');
+  // Three distinct actors follow the recipient, producing three notifications.
+  for (const label of ['a', 'b', 'c']) {
+    const actor = await createUser(`inbox-actor-${label}`);
+    await createProfile(actor, `Actor-${label}`);
+    const followResponse = await request(app)
+      .post('/follows')
+      .set(bearer(actor.token))
+      .send({ followeeId: recipient.uid });
+    assert.equal(followResponse.status, 201);
+  }
+
+  const firstPage = await request(app).get('/notifications?limit=2').set(bearer(recipient.token));
+  assert.equal(firstPage.status, 200);
+  assert.equal(firstPage.body.notifications.length, 2);
+  assert.equal(firstPage.body.unreadCount, 3);
+  assert.ok(firstPage.body.nextCursor, 'expected a nextCursor for the second page');
+  // Newest-first: createdAt is non-increasing down the page.
+  assert.ok(firstPage.body.notifications[0].createdAt >= firstPage.body.notifications[1].createdAt);
+
+  const secondPage = await request(app)
+    .get(`/notifications?limit=2&cursor=${encodeURIComponent(firstPage.body.nextCursor)}`)
+    .set(bearer(recipient.token));
+  assert.equal(secondPage.status, 200);
+  assert.equal(secondPage.body.notifications.length, 1);
+  assert.equal(secondPage.body.nextCursor, null);
+
+  // No overlap across pages: three distinct notification ids in total.
+  const ids = new Set([...firstPage.body.notifications, ...secondPage.body.notifications].map(n => n.id));
+  assert.equal(ids.size, 3);
+});
+
+test('marking read is owner-only, and read-all clears the unread count', async () => {
+  const owner = await createUser('read-owner');
+  const attacker = await createUser('read-attacker');
+  await createProfile(owner, 'Owner');
+  const followerA = await createUser('read-follower-a');
+  const followerB = await createUser('read-follower-b');
+  await request(app).post('/follows').set(bearer(followerA.token)).send({ followeeId: owner.uid });
+  await request(app).post('/follows').set(bearer(followerB.token)).send({ followeeId: owner.uid });
+
+  const inbox = await request(app).get('/notifications').set(bearer(owner.token));
+  assert.equal(inbox.body.unreadCount, 2);
+  const targetId = inbox.body.notifications[0].id;
+
+  // A non-owner cannot mark it read and cannot even learn it exists (404).
+  const attackerRead = await request(app)
+    .post(`/notifications/${targetId}/read`)
+    .set(bearer(attacker.token));
+  assert.equal(attackerRead.status, 404);
+
+  // A missing notification is also a 404.
+  const missingRead = await request(app)
+    .post('/notifications/does-not-exist/read')
+    .set(bearer(owner.token));
+  assert.equal(missingRead.status, 404);
+
+  // The owner marks one read: unreadCount drops to 1.
+  const ownerRead = await request(app)
+    .post(`/notifications/${targetId}/read`)
+    .set(bearer(owner.token));
+  assert.equal(ownerRead.status, 200);
+  assert.equal(ownerRead.body.read, true);
+  const afterOne = await request(app).get('/notifications').set(bearer(owner.token));
+  assert.equal(afterOne.body.unreadCount, 1);
+
+  // read-all clears the rest.
+  const readAll = await request(app).post('/notifications/read-all').set(bearer(owner.token));
+  assert.equal(readAll.status, 200);
+  assert.equal(readAll.body.updated, 1);
+  const afterAll = await request(app).get('/notifications').set(bearer(owner.token));
+  assert.equal(afterAll.body.unreadCount, 0);
 });
