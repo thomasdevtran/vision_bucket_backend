@@ -9,11 +9,28 @@ const {
     removeWatchEntry,
     upsertWatchEntry
 } = require('../data/watchEntries');
+const { buildExport, importData } = require('../data/importExport');
 
 // Middleware to handle errors
 const asyncHandler = fn => (req, res, next) => {
     Promise.resolve(fn(req, res, next)).catch(next);
 };
+
+// GET /profile/export - download a single JSON document of the caller's own
+// data (profile, watch entries, diary, reviews, lists). Identity from the token.
+router.get('/export', authenticate, asyncHandler(async (req, res) => {
+    const data = await buildExport(req.user.uid);
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="vision-bucket-export.json"');
+    res.status(200).send(JSON.stringify(data, null, 2));
+}));
+
+// POST /profile/import - recreate the caller's entries from an export document.
+// Idempotent/dedup-safe; everything is written under the caller's uid.
+router.post('/import', authenticate, asyncHandler(async (req, res) => {
+    const summary = await importData(req.user.uid, req.body);
+    res.status(200).json(summary);
+}));
 
 // GET http://localhost:5000/profile/data/:uid (fetches user profile data by uid)
 router.get('/data/:uid', async (req, res) => {

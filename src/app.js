@@ -5,10 +5,19 @@ const helmet = require('helmet');
 const { rateLimit } = require('express-rate-limit');
 const pinoHttp = require('pino-http');
 const swaggerUi = require('swagger-ui-express');
+const diaryRouter = require('./routes/diary');
 const discussionsRouter = require('./routes/discussions');
+const moviesRouter = require('./routes/movies');
+const feedRouter = require('./routes/feed');
+const followsRouter = require('./routes/follows');
+const listsRouter = require('./routes/lists');
 const newsRouter = require('./routes/news');
+const notificationsRouter = require('./routes/notifications');
 const profileRouter = require('./routes/profile');
+const recommendationsRouter = require('./routes/recommendations');
+const reportsRouter = require('./routes/reports');
 const reviewsRouter = require('./routes/reviews');
+const statsRouter = require('./routes/stats');
 const openapi = require('./openapi');
 const { AppError, errorHandler, notFoundHandler } = require('./errors');
 
@@ -54,9 +63,18 @@ const createApp = ({ config, logger, readinessCheck }) => {
   app.get('/openapi.json', (req, res) => res.json(openapi));
   app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapi, { customSiteTitle: 'Vision Bucket API' }));
 
+  app.use('/api/movies', moviesRouter);
   app.use('/discussions', discussionsRouter);
+  app.use('/feed', feedRouter);
+  app.use('/follows', followsRouter);
+  app.use('/lists', listsRouter);
   app.use('/news', newsRouter);
+  app.use('/notifications', notificationsRouter);
+  app.use('/profile/diary', diaryRouter);
+  app.use('/profile/stats', statsRouter);
   app.use('/profile', profileRouter);
+  app.use('/recommendations', recommendationsRouter);
+  app.use('/reports', reportsRouter);
   app.use('/reviews', reviewsRouter);
 
   app.use(notFoundHandler);
