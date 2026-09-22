@@ -64,9 +64,13 @@ The frontend never touches Firestore directly — the deployed
 | *      | `/profile/*`                | mixed       | Profiles, watch entries, reviews index |
 | *      | `/discussions/*`, `/news/*` | mixed       | Threads and comments             |
 
-> **Note:** the frontend's movie discovery calls (`/api/movies/*`) are served by a
-> separate movie-catalog proxy that is **not part of this repository** and is not
-> currently deployed. This API covers auth, profiles, reviews, and discussions.
+> Movie discovery (`/api/movies/*`) is included in this repository. Set `TMDB_ACCESS_TOKEN` or `TMDB_API_KEY` for live discovery. Without a credential, these endpoints return a structured 503 error.
+
+## Portfolio demo
+
+The frontend includes a separate static demo mode (`npm run demo` or `npm run build:demo`). It needs no backend, Firebase credentials, TMDB account, or sign-in. Visitors use fictional sample content and browser-local persistence. This does not change this API’s authentication or connect demo visitors to Firestore. See the frontend `DEMO.md` for the walkthrough.
+
+Authenticated review reads include `isOwner` for the verified caller; public responses continue to omit owner UIDs. This lets the frontend display editing controls while the mutation routes still enforce ownership.
 
 ## Getting started
 

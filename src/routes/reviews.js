@@ -40,12 +40,13 @@ const resolveUid = async req => {
 
 // Strip the owner uid and expose the community fields. reactedByMe is only
 // included when the caller was identified via a token.
-const serializeReview = (id, data, reactedByMe) => {
+const serializeReview = (id, data, reactedByMe, callerUid) => {
     const { uid: _uid, ...review } = data;
     const count = Number(data.reactionCount);
     return {
         id,
         ...review,
+        ...(callerUid ? { isOwner: data.uid === callerUid } : {}),
         isSpoiler: data.isSpoiler === true,
         reactionCount: Number.isFinite(count) && count > 0 ? count : 0,
         ...(reactedByMe === undefined ? {} : { reactedByMe })
@@ -79,7 +80,8 @@ router.get('/movie/:movieId', async (req, res) => {
             .map((reviewDoc) => serializeReview(
                 reviewDoc.id,
                 reviewDoc.data(),
-                callerUid ? reacted.has(reviewDoc.id) : undefined
+                callerUid ? reacted.has(reviewDoc.id) : undefined,
+                callerUid
             ))
             .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
         res.status(200).json(reviews);
@@ -102,7 +104,8 @@ router.get('/:docId', async (req, res) => {
         res.status(200).json(serializeReview(
             reviewSnap.id,
             reviewSnap.data(),
-            callerUid ? reacted.has(docId) : undefined
+            callerUid ? reacted.has(docId) : undefined,
+            callerUid
         ));
     } catch (error) {
         console.error("Error fetching review:", error);

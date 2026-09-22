@@ -110,6 +110,14 @@ test('public review reads return reviews for a movie without leaking the owner u
   assert.equal(oneResponse.body.id, reviewRef.id);
   assert.equal(oneResponse.body.uid, undefined);
 
+  const ownerResponse = await request(app).get(`/reviews/${reviewRef.id}`).set(bearer(owner.token));
+  assert.equal(ownerResponse.body.isOwner, true);
+  assert.equal(ownerResponse.body.uid, undefined);
+  const stranger = await createUser('reader-stranger');
+  const strangerResponse = await request(app).get(`/reviews/movie/${movieId}`).set(bearer(stranger.token));
+  assert.equal(strangerResponse.body[0].isOwner, false);
+  assert.equal(listResponse.body[0].isOwner, undefined);
+
   const missingResponse = await request(app).get('/reviews/does-not-exist');
   assert.equal(missingResponse.status, 404);
 });
