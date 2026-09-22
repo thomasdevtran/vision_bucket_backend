@@ -10,6 +10,25 @@ The React frontend lives in a
 
 ---
 
+## Public portfolio movie API
+
+The portfolio frontend uses real TMDB movies with no visitor sign-in. Its movie-only
+API entry point is `api/index.js`, deployed with `vercel.json`. It reuses the existing
+TMDB provider, validation, normalization, retries, and cache. Only `/health` and
+`/api/movies/*` are exposed; Firebase and user-data routes are not mounted.
+The full authenticated application still starts with `npm start`.
+
+For local movie discovery, set `TMDB_ACCESS_TOKEN` in an ignored `.env` file and run
+`npm run demo:movies`. No Firebase credentials are required for this command.
+On Vercel, configure `TMDB_ACCESS_TOKEN` as a sensitive production environment
+variable and deploy with `vercel --prod`. Never put TMDB credentials in frontend
+variables, source, or a public build. Rotate any token previously committed publicly.
+
+The Vercel project is `vision-bucket-movies`. Deploy backend changes explicitly
+with `vercel --prod`; the project is not connected to automatic Git deployments.
+This avoids publishing unrelated changes from the repository's main branch.
+
+
 ## Features
 
 - **Firebase ID-token auth** — every mutating endpoint verifies a Firebase ID

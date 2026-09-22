@@ -2,7 +2,7 @@ const { readdirSync, statSync } = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
-const roots = ['src', 'scripts'];
+const roots = ['src', 'scripts', 'api'];
 const files = [];
 
 const collectJavaScript = directory => {

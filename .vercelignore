@@ -1,0 +1,5 @@
+.env*
+test/
+.github/
+docs/
+*-debug.log
