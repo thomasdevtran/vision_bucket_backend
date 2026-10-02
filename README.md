@@ -1,12 +1,21 @@
-# Vision Bucket — Backend API
+# Vision Bucket - Backend API
 
-The REST API behind [Vision Bucket](https://github.com/trollbro71/vision_bucket),
+[![CI](https://github.com/thomasdevtran/vision_bucket_backend/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/thomasdevtran/vision_bucket_backend/actions/workflows/ci.yml)
+
+The REST API behind [Vision Bucket](https://github.com/thomasdevtran/vision_bucket),
 a full-stack movie tracking and community platform. This service is built on
 **Express 5** and **Firestore** (via the Firebase Admin SDK) and handles
 authentication, user profiles, watch tracking, reviews, and discussion boards.
 
 The React frontend lives in a
-[separate repository](https://github.com/trollbro71/vision_bucket).
+[separate repository](https://github.com/thomasdevtran/vision_bucket).
+
+**[Try the portfolio demo](https://thomasdevtran.github.io/vision_bucket/#/)**
+without signing in. That preview uses live TMDB movies through a movie-only API,
+plus sample community content and browser-local user activity. It does not save
+visitor activity to this authenticated Firebase backend. The demo's API entry
+point is on [`codex/portfolio-demo`](https://github.com/thomasdevtran/vision_bucket_backend/tree/codex/portfolio-demo);
+the setup below runs the full application on `main`.
 
 ---
 
@@ -22,8 +31,10 @@ The React frontend lives in a
   per-request IDs, structured logging (pino), and `/health` + `/ready` probes.
 - **API documentation** — OpenAPI spec at `/openapi.json` and Swagger UI at
   `/docs`.
-- **Normalized data model** — deterministic `watch_entries` and a top-level
+- **Normalized data model** - deterministic `watch_entries` and a top-level
   `comments` collection, with a reversible migration from the legacy shape.
+- **Movie discovery** - TMDB-backed search, genres, popular titles, and details,
+  with request validation, an in-memory TTL cache, and bounded retries.
 
 ## Tech stack
 
@@ -44,10 +55,11 @@ flowchart LR
     FE[React frontend] -->|REST + Bearer ID token| API[Express API]
     API -->|verify token| AUTH[Firebase Auth]
     API -->|Admin SDK| FS[(Firestore)]
+    API -->|server-side credentials| TMDB[(TMDB movie catalog)]
 ```
 
-The frontend never touches Firestore directly — the deployed
-[`firestore.rules`](firestore.rules) deny all client access, so the Express API
+The frontend accesses data through the API. The included
+[`firestore.rules`](firestore.rules) deny all client access when deployed, so the Express API
 (using the Admin SDK) is the single path to data.
 
 ## API surface
@@ -56,6 +68,7 @@ The frontend never touches Firestore directly — the deployed
 | ------ | --------------------------- | ----------- | -------------------------------- |
 | GET    | `/health`, `/ready`         | none        | Liveness / readiness probes      |
 | GET    | `/openapi.json`, `/docs`    | none        | API spec and Swagger UI          |
+| GET    | `/api/movies/*`            | none        | TMDB catalog proxy               |
 | GET    | `/reviews/movie/:movieId`   | none        | List reviews for a movie         |
 | GET    | `/reviews/:id`              | none        | Fetch a single review            |
 | POST   | `/reviews/posting`          | required    | Create a review                  |
@@ -64,24 +77,25 @@ The frontend never touches Firestore directly — the deployed
 | *      | `/profile/*`                | mixed       | Profiles, watch entries, reviews index |
 | *      | `/discussions/*`, `/news/*` | mixed       | Threads and comments             |
 
-> **Note:** the frontend's movie discovery calls (`/api/movies/*`) are served by a
-> separate movie-catalog proxy that is **not part of this repository** and is not
-> currently deployed. This API covers auth, profiles, reviews, and discussions.
+Movie discovery is included in this repository under [`src/movies`](src/movies)
+and [`src/routes/movies.js`](src/routes/movies.js). Set `TMDB_ACCESS_TOKEN` or
+`TMDB_API_KEY` on the server to enable it. Missing credentials produce a structured
+`movie_provider_not_configured` error; they do not prevent server startup.
 
 ## Getting started
 
 ### Prerequisites
 
-- Node.js 22+
+- Node.js 22 and npm 10 (the CI toolchain)
 - A Firebase project with Firestore and Authentication enabled
-- The [Firebase CLI](https://firebase.google.com/docs/cli) (for the emulator tests)
+- Java 21+ for Firebase emulator tests; `npm ci` installs the Firebase CLI locally
 
 ### Install
 
 ```sh
 git clone https://github.com/thomasdevtran/vision_bucket_backend.git
 cd vision_bucket_backend
-npm install
+npm ci
 ```
 
 ### Configure
@@ -93,6 +107,10 @@ NODE_ENV=development
 PORT=5000
 FIREBASE_PROJECT_ID=your-project-id
 FRONTEND_ORIGINS=http://localhost:3000   # comma-separated allow-list
+
+# Movie discovery (server-side only; provide one):
+TMDB_ACCESS_TOKEN=your-tmdb-read-access-token
+# TMDB_API_KEY=your-tmdb-api-key
 
 # Local Admin credentials — provide ONE of:
 GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/service-account.json
@@ -134,6 +152,8 @@ npm run lint          # ESLint
 npm test              # unit tests + Firebase-emulator integration tests
 npm run test:unit     # unit tests only
 npm run test:emulator # emulator-backed integration tests only
+npm run build         # syntax-check server and maintenance scripts
+npm run audit         # production dependency audit; fails on high/critical findings
 ```
 
 The emulator suite (`test/integration/api.emulator.test.js`) exercises real
@@ -141,6 +161,26 @@ auth/Firestore behavior, including unauthenticated access and cross-user
 authorization attempts. CI runs lint, emulator tests, build checks, and a
 production dependency audit
 ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+
+The emulator command selects the isolated `demo-vision-bucket` project and needs
+no production Firebase credentials. Movie-provider unit tests use mocked upstream
+responses rather than a live TMDB token. After dependency changes, regenerate the
+lockfile with npm 10 and verify a fresh `npm ci` before committing.
+
+## Reviewer guide
+
+- [`src/app.js`](src/app.js): middleware, route registration, and health probes.
+- [`src/movies`](src/movies) and [movie tests](test/unit/movies.test.js): provider
+  normalization, cache, retries, and failure handling.
+- [Emulator integration tests](test/integration/api.emulator.test.js): real local
+  Firebase Auth/Firestore behavior, including unauthorized cross-user operations.
+- [Migration script](scripts/migrate-normalized-records.js): dry-run-first
+  normalization that retains the legacy records.
+
+The build command is a JavaScript syntax check, not a deployment or load test.
+Passing CI demonstrates the tested contracts; it does not establish production
+scale or complete coverage of every route. Sample activity in the public demo
+should not be presented as real users or production usage.
 
 ## Normalized Firestore records
 
@@ -186,4 +226,4 @@ I designed and built:
 
 ## Related
 
-- Frontend app: [vision_bucket](https://github.com/trollbro71/vision_bucket)
+- Frontend app: [vision_bucket](https://github.com/thomasdevtran/vision_bucket)
